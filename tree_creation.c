@@ -47,29 +47,45 @@
 
 #include <stdio.h>
 
+/*---------------------------------------------------------------------------*/
 #include <string.h> // for strncpy
+#include <stdbool.h>
+
+/* MT == Message Type */
+#define MT_INFORMATION_REQUEST 0
+#define MT_INFORMATION 1
+#define MT_DATA 2
+
+/* Message format */
 struct Message {
-  int flag;
-  char content[6];
+  uint8_t type; 
 };
+
+/* Global variables required */
+static bool connected_to_root = false;
 
 /*---------------------------------------------------------------------------*/
 PROCESS(example_broadcast_process, "Broadcast example");
 AUTOSTART_PROCESSES(&example_broadcast_process);
+
 /*---------------------------------------------------------------------------*/
 static void
 broadcast_recv(struct broadcast_conn *c, const rimeaddr_t *from)
 {
-  struct Message * received = (struct Message *) packetbuf_dataptr();
-  printf("broadcast message received from %d.%d ! Flag : %d. Message : %s.\n",
-         from->u8[0], from->u8[1], received->flag, received->content);
+  struct Message * message = (struct Message *) packetbuf_dataptr();
+  printf("broadcast message received from %d.%d\n",
+         from->u8[0], from->u8[1]);
+  // TODO : UNICAST RESPONSE
 }
 static const struct broadcast_callbacks broadcast_call = {broadcast_recv};
 static struct broadcast_conn broadcast;
+
 /*---------------------------------------------------------------------------*/
 PROCESS_THREAD(example_broadcast_process, ev, data)
 {
   static struct etimer et;
+  static struct Message message;
+  static bool send_message = false;
 
   PROCESS_EXITHANDLER(broadcast_close(&broadcast);)
 
@@ -78,19 +94,26 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
   broadcast_open(&broadcast, 129, &broadcast_call);
 
   while(1) {
+    send_message = false;
 
     /* Delay 2-4 seconds */
     etimer_set(&et, CLOCK_SECOND * 4 + random_rand() % (CLOCK_SECOND * 4));
-
     PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
 
-    static struct Message message;
-    message.flag = 48;
-    strncpy(message.content, "Hello\0", 6);
+    /* If not connected to root, send a broadcast message to get information
+       about neighbourhood */
+    if (!connected_to_root) {
+      message.type = MT_INFORMATION_REQUEST;
+      send_message = true;
+    }
+  
+    /* Send message if asked */
+    if (send_message) {
+      packetbuf_copyfrom(&message, sizeof(message));
+      broadcast_send(&broadcast);
+      printf("broadcast message sent\n");
+    }
 
-    packetbuf_copyfrom(&message, sizeof(message));
-    broadcast_send(&broadcast);
-    printf("broadcast message sent\n");
   }
 
   PROCESS_END();
