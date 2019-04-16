@@ -188,6 +188,7 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
   
     /* Send message if asked */
     if (send_message) {
+      packetbuf_copyfrom("x", 6);
       broadcast_send(&broadcast);
       printf("broadcast message sent\n");
     }
