@@ -20,13 +20,20 @@
 #define MT_INFORMATION          0
 #define MT_DATA                 1
 
+typedef struct {
+  rimeaddr_t    addr;
+  int           hops;
+} Neighbour;
+
 /* Message format */
-struct Message {
-  uint8_t type; 
-};
+typedef struct {
+  uint8_t       type; 
+  int           hops;
+} Message;
 
 /* Global variables required */
 static bool connected_to_root = IS_ROOT;
+static Neighbour my_parent;
 
 /*---------------------------------------------------------------------------*/
 /* OPTIONAL: Sender history.
@@ -70,9 +77,18 @@ recv_runicast(struct runicast_conn *c, const rimeaddr_t *from, uint8_t seqno)
     /* Update existing history entry */
     e->seq = seqno;
   }
-  
-  printf("runicast message received from %d.%d", from->u8[0], from->u8[1]);
-  connected_to_root = true;
+  Message *message = (Message *) packetbuf_dataptr();
+  bool new_parent = true;
+  printf("runicast message received from %d.%d, hops : %d\n", 
+          from->u8[0], from->u8[1], message->hops);
+  if(connected_to_root){
+    new_parent = message->hops < my_parent.hops;
+  }
+  if(new_parent){
+    rimeaddr_copy(&(my_parent.addr), from);
+    my_parent.hops = message->hops;
+    connected_to_root = true;
+  }
 }
 static void
 sent_runicast(struct runicast_conn *c, const rimeaddr_t *to, uint8_t retransmissions)
@@ -102,25 +118,19 @@ broadcast_recv(struct broadcast_conn *c, const rimeaddr_t *from)
   printf("broadcast message received from %d.%d\n",
          from->u8[0], from->u8[1]);
 
-  if(true) { // TODO : check if is sending runicast ? (see example)
-    struct Message response;
-    rimeaddr_t recv;
+  if(!runicast_is_transmitting(&runicast) && connected_to_root) {
+    Message response;
 
     response.type = MT_INFORMATION;
-    // TODO : change if connected to root
-    //rimeaddr_copy(&root, &rimeaddr_node_addr);
+    response.hops = my_parent.hops + 1;
 
     packetbuf_copyfrom((const void *) &response, sizeof(response));
 
     /* The unicast receiver (recv) is the broadcast sender (from) : */
-    recv.u8[0] = from->u8[0];
-    recv.u8[1] = from->u8[1];
-
     printf("%u.%u: sending runicast to address %u.%u\n",
            rimeaddr_node_addr.u8[0], rimeaddr_node_addr.u8[1],
-           recv.u8[0], recv.u8[1]);
-
-    runicast_send(&runicast, &recv, MAX_RETRANSMISSIONS);
+           from->u8[0], from->u8[1]);
+    runicast_send(&runicast, from, MAX_RETRANSMISSIONS);
   }
 }
 static const struct broadcast_callbacks broadcast_call = {broadcast_recv};
@@ -142,6 +152,11 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
   list_init(history_table);
   memb_init(&history_mem);
 
+  if(IS_ROOT) {
+    my_parent.addr = rimeaddr_node_addr;
+    my_parent.hops = 0;
+  }
+
   while(1) {
     send_message = false;
 
@@ -151,8 +166,11 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
 
     /* If not connected to root, send a broadcast message to get information
        about neighbourhood */
-    if (!connected_to_root) {
+    if (!connected_to_root && !IS_ROOT) {
       send_message = true;
+    } else {
+      printf("##### My parent is %d:%d, hops : %d #####\n",
+            my_parent.addr.u8[0], my_parent.addr.u8[1], my_parent.hops);
     }
   
     /* Send message if asked */
