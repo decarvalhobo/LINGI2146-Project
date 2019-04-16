@@ -36,7 +36,7 @@ typedef struct {
 } Message;
 
 /* Global variables required */
-static bool connected_to_root = false;
+static bool connected_to_tree = false;
 static Neighbour my_parent;
 
 /*---------------------------------------------------------------------------*/
@@ -86,7 +86,7 @@ recv_runicast(struct runicast_conn *c, const rimeaddr_t *from, uint8_t seqno)
   uint16_t rssi = packetbuf_attr(PACKETBUF_ATTR_RSSI);
   printf("runicast message received from %d.%d, hops : %lu\n", 
           from->u8[0], from->u8[1], message->hops);
-  if(connected_to_root){
+  if(connected_to_tree){
     /* We store the new parent if it is closer (hops), or if the new possible parent 
        and the current parent have the same hops number but the new one has a better 
        signal strenght */
@@ -97,7 +97,7 @@ recv_runicast(struct runicast_conn *c, const rimeaddr_t *from, uint8_t seqno)
     rimeaddr_copy(&(my_parent.addr), from);
     my_parent.hops = message->hops;
     my_parent.rssi = rssi;
-    connected_to_root = true;
+    connected_to_tree = true;
   }
 }
 static void
@@ -136,7 +136,7 @@ broadcast_recv(struct broadcast_conn *c, const rimeaddr_t *from)
       - is not the neighbour's parent
   */
   if(!runicast_is_transmitting(&runicast) 
-      && connected_to_root
+      && connected_to_tree
       && neighbour_parent->hops >= (my_parent.hops + 1)
       && !rimeaddr_cmp(&(neighbour_parent->addr), &rimeaddr_node_addr)) {
     Message response;
@@ -183,7 +183,7 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
 
   if (is_root) {
     my_parent.hops = 0;
-    connected_to_root = true;
+    connected_to_tree = true;
   } 
 
   while(1) {
@@ -196,10 +196,10 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
     /* If not connected to root, send a broadcast message to get information
        about neighbourhood */
     if (!is_root) {
-      if (!connected_to_root || !skip_broadcast) send_broadcast = true;
+      if (!connected_to_tree || !skip_broadcast) send_broadcast = true;
       else skip_broadcast = !skip_broadcast;
     } 
-    if (connected_to_root) {
+    if (connected_to_tree) {
       printf("##### My parent is %d:%d, hops : %lu #####\n",
             my_parent.addr.u8[0], my_parent.addr.u8[1], my_parent.hops);
     }
