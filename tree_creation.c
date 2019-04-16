@@ -16,13 +16,17 @@
 #include <stdbool.h>
 
 #define IS_ROOT                 false
+
 /* MT == Message Type */
 #define MT_INFORMATION          0
 #define MT_DATA                 1
 
+// TODO : quid if node dead ?
+
 typedef struct {
   rimeaddr_t    addr;
   int           hops;
+  uint16_t      rssi;
 } Neighbour;
 
 /* Message format */
@@ -77,16 +81,22 @@ recv_runicast(struct runicast_conn *c, const rimeaddr_t *from, uint8_t seqno)
     /* Update existing history entry */
     e->seq = seqno;
   }
+  // TODO : COMMENT CODE
   Message *message = (Message *) packetbuf_dataptr();
+  uint16_t rssi = packetbuf_attr(PACKETBUF_ATTR_RSSI);
   bool new_parent = true;
   printf("runicast message received from %d.%d, hops : %d\n", 
           from->u8[0], from->u8[1], message->hops);
   if(connected_to_root){
-    new_parent = message->hops < my_parent.hops;
+    /* We store the new parent if he's closer (hops) or if there is the same hops number
+       but the new one has a better signal strenght */
+    new_parent = (message->hops < my_parent.hops)
+                  || (message->hops == my_parent.hops && rssi > my_parent.rssi);
   }
   if(new_parent){
     rimeaddr_copy(&(my_parent.addr), from);
     my_parent.hops = message->hops;
+    my_parent.rssi = rssi;
     connected_to_root = true;
   }
 }
@@ -141,6 +151,7 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
 {
   static struct etimer et;
   static bool send_message = false;
+  static bool skip_broadcast = true;
 
   PROCESS_EXITHANDLER(broadcast_close(&broadcast);)
 
@@ -166,9 +177,11 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
 
     /* If not connected to root, send a broadcast message to get information
        about neighbourhood */
-    if (!connected_to_root && !IS_ROOT) {
-      send_message = true;
-    } else {
+    if (!IS_ROOT) {
+      if (!connected_to_root || !skip_broadcast) send_message = true;
+      else skip_broadcast = !skip_broadcast;
+    } 
+    if (connected_to_root) {
       printf("##### My parent is %d:%d, hops : %d #####\n",
             my_parent.addr.u8[0], my_parent.addr.u8[1], my_parent.hops);
     }
