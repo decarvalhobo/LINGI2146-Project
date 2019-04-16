@@ -128,8 +128,6 @@ broadcast_recv(struct broadcast_conn *c, const rimeaddr_t *from)
   Neighbour *neighbour_parent = (Neighbour *) packetbuf_dataptr();
   printf("broadcast message received from %d.%d\n",
          from->u8[0], from->u8[1]);
- // printf("current parent hops : %lu\n", my_parent.hops);
- // printf("neighbour hops      : %lu\n", neighbour_parent->hops);
   
   /* Current nodes shares its configuration if (and) : 
       - is not sending runicast
@@ -153,12 +151,6 @@ broadcast_recv(struct broadcast_conn *c, const rimeaddr_t *from)
            rimeaddr_node_addr.u8[0], rimeaddr_node_addr.u8[1],
            from->u8[0], from->u8[1]);
     runicast_send(&runicast, from, MAX_RETRANSMISSIONS);
-  } else {
-    //printf("ELSE !\n");
-    //printf("%d\n", !runicast_is_transmitting(&runicast));
-    //printf("%d\n", connected_to_root);
-    //printf("%d (%lu >= %lu)\n", neighbour_parent->hops >= (my_parent.hops + 1), neighbour_parent->hops, my_parent.hops + 1);
-    //printf("%d\n", rimeaddr_cmp(&(neighbour_parent->addr), &rimeaddr_node_addr));
   }
 }
 static const struct broadcast_callbacks broadcast_call = {broadcast_recv};
