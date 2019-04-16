@@ -14,29 +14,29 @@
 /*---------------------------------------------------------------------------*/
 #include <string.h> // for strncpy
 #include <stdbool.h>
-
-#define IS_ROOT                 false
+#include <stdint.h>
 
 /* MT == Message Type */
 #define MT_INFORMATION          0
 #define MT_DATA                 1
 
 // TODO : quid if node dead ?
+// TODO : comment code
 
 typedef struct {
   rimeaddr_t    addr;
-  int           hops;
+  int32_t       hops;
   uint16_t      rssi;
 } Neighbour;
 
 /* Message format */
 typedef struct {
   uint8_t       type; 
-  int           hops;
+  uint32_t      hops;
 } Message;
 
 /* Global variables required */
-static bool connected_to_root = IS_ROOT;
+static bool connected_to_root = false;
 static Neighbour my_parent;
 
 /*---------------------------------------------------------------------------*/
@@ -81,15 +81,15 @@ recv_runicast(struct runicast_conn *c, const rimeaddr_t *from, uint8_t seqno)
     /* Update existing history entry */
     e->seq = seqno;
   }
-  // TODO : COMMENT CODE
+  bool new_parent = true;
   Message *message = (Message *) packetbuf_dataptr();
   uint16_t rssi = packetbuf_attr(PACKETBUF_ATTR_RSSI);
-  bool new_parent = true;
-  printf("runicast message received from %d.%d, hops : %d\n", 
+  printf("runicast message received from %d.%d, hops : %lu\n", 
           from->u8[0], from->u8[1], message->hops);
   if(connected_to_root){
-    /* We store the new parent if he's closer (hops) or if there is the same hops number
-       but the new one has a better signal strenght */
+    /* We store the new parent if it is closer (hops), or if the new possible parent 
+       and the current parent have the same hops number but the new one has a better 
+       signal strenght */
     new_parent = (message->hops < my_parent.hops)
                   || (message->hops == my_parent.hops && rssi > my_parent.rssi);
   }
@@ -125,10 +125,22 @@ AUTOSTART_PROCESSES(&example_broadcast_process);
 static void
 broadcast_recv(struct broadcast_conn *c, const rimeaddr_t *from)
 {
+  Neighbour *neighbour_parent = (Neighbour *) packetbuf_dataptr();
   printf("broadcast message received from %d.%d\n",
          from->u8[0], from->u8[1]);
-
-  if(!runicast_is_transmitting(&runicast) && connected_to_root) {
+ // printf("current parent hops : %lu\n", my_parent.hops);
+ // printf("neighbour hops      : %lu\n", neighbour_parent->hops);
+  
+  /* Current nodes shares its configuration if (and) : 
+      - is not sending runicast
+      - is connected to the tree
+      - the parent hops is less (or equal) than the neighbour hops
+      - is not the neighbour's parent
+  */
+  if(!runicast_is_transmitting(&runicast) 
+      && connected_to_root
+      && neighbour_parent->hops >= (my_parent.hops + 1)
+      && !rimeaddr_cmp(&(neighbour_parent->addr), &rimeaddr_node_addr)) {
     Message response;
 
     response.type = MT_INFORMATION;
@@ -136,11 +148,17 @@ broadcast_recv(struct broadcast_conn *c, const rimeaddr_t *from)
 
     packetbuf_copyfrom((const void *) &response, sizeof(response));
 
-    /* The unicast receiver (recv) is the broadcast sender (from) : */
+    /* The unicast receiver is the broadcast sender (from) : */
     printf("%u.%u: sending runicast to address %u.%u\n",
            rimeaddr_node_addr.u8[0], rimeaddr_node_addr.u8[1],
            from->u8[0], from->u8[1]);
     runicast_send(&runicast, from, MAX_RETRANSMISSIONS);
+  } else {
+    //printf("ELSE !\n");
+    //printf("%d\n", !runicast_is_transmitting(&runicast));
+    //printf("%d\n", connected_to_root);
+    //printf("%d (%lu >= %lu)\n", neighbour_parent->hops >= (my_parent.hops + 1), neighbour_parent->hops, my_parent.hops + 1);
+    //printf("%d\n", rimeaddr_cmp(&(neighbour_parent->addr), &rimeaddr_node_addr));
   }
 }
 static const struct broadcast_callbacks broadcast_call = {broadcast_recv};
@@ -150,8 +168,9 @@ static struct broadcast_conn broadcast;
 PROCESS_THREAD(example_broadcast_process, ev, data)
 {
   static struct etimer et;
-  static bool send_message = false;
+  static bool send_broadcast = false;
   static bool skip_broadcast = true;
+  static bool is_root = false;
 
   PROCESS_EXITHANDLER(broadcast_close(&broadcast);)
 
@@ -163,13 +182,20 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
   list_init(history_table);
   memb_init(&history_mem);
 
-  if(IS_ROOT) {
-    my_parent.addr = rimeaddr_node_addr;
+  /* By default, node 1.0 is the root */
+  is_root = rimeaddr_node_addr.u8[0] == 1 && rimeaddr_node_addr.u8[1] == 0;
+
+  my_parent.addr = rimeaddr_node_addr;
+  my_parent.hops = 100; // TODO fix ?
+  my_parent.rssi = 0;
+
+  if (is_root) {
     my_parent.hops = 0;
-  }
+    connected_to_root = true;
+  } 
 
   while(1) {
-    send_message = false;
+    send_broadcast = false;
 
     /* Delay 2-4 seconds */
     etimer_set(&et, CLOCK_SECOND * 4 + random_rand() % (CLOCK_SECOND * 4));
@@ -177,18 +203,18 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
 
     /* If not connected to root, send a broadcast message to get information
        about neighbourhood */
-    if (!IS_ROOT) {
-      if (!connected_to_root || !skip_broadcast) send_message = true;
+    if (!is_root) {
+      if (!connected_to_root || !skip_broadcast) send_broadcast = true;
       else skip_broadcast = !skip_broadcast;
     } 
     if (connected_to_root) {
-      printf("##### My parent is %d:%d, hops : %d #####\n",
+      printf("##### My parent is %d:%d, hops : %lu #####\n",
             my_parent.addr.u8[0], my_parent.addr.u8[1], my_parent.hops);
     }
   
     /* Send message if asked */
-    if (send_message) {
-      packetbuf_copyfrom("x", 6);
+    if (send_broadcast) {
+      packetbuf_copyfrom((const void *) &my_parent, sizeof(my_parent));
       broadcast_send(&broadcast);
       printf("broadcast message sent\n");
     }
