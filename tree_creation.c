@@ -141,28 +141,26 @@ broadcast_recv(struct broadcast_conn *c, const rimeaddr_t *from)
   printf("broadcast message received from %d.%d\n",
          from->u8[0], from->u8[1]);
   
-  if(!runicast_is_transmitting(&runicast)){
-    /* Current node share its configuration if (or) :
-        - is the parent of the broadcast sender
-        - (and) :
-          - is connected to the tree
-          - has a beter configuration than the broadcast sender parent
-    */
-    if ((my_parent.addr.u8[0] == from->u8[0] && my_parent.addr.u8[1] == from->u8[1]) 
-        || (connected_to_tree && neighbour_parent->hops >= (my_parent.hops + 1))) {
-      Message response;
+  /* Current node share its configuration if (and) :
+    - is not sending runicast
+    - is connected to the tree
+    - the parent hops is less (or equal) than the neighbour hops
+  */
+  if(!runicast_is_transmitting(&runicast)
+      && connected_to_tree 
+      && neighbour_parent->hops >= (my_parent.hops + 1)) {
+    Message response;
 
-      response.type = MT_INFORMATION;
-      response.hops = my_parent.hops + 1;
+    response.type = MT_INFORMATION;
+    response.hops = my_parent.hops + 1;
 
-      packetbuf_copyfrom((const void *) &response, sizeof(response));
+    packetbuf_copyfrom((const void *) &response, sizeof(response));
 
-      /* The unicast receiver is the broadcast sender (from) : */
-      printf("%u.%u: sending runicast to address %u.%u\n",
-             rimeaddr_node_addr.u8[0], rimeaddr_node_addr.u8[1],
-             from->u8[0], from->u8[1]);
-      runicast_send(&runicast, from, MAX_RETRANSMISSIONS);
-    }   
+    /* The unicast receiver is the broadcast sender (from) : */
+    printf("%u.%u: sending runicast to address %u.%u\n",
+           rimeaddr_node_addr.u8[0], rimeaddr_node_addr.u8[1],
+           from->u8[0], from->u8[1]);
+    runicast_send(&runicast, from, MAX_RETRANSMISSIONS);   
   }
 }
 static const struct broadcast_callbacks broadcast_call = {broadcast_recv};
