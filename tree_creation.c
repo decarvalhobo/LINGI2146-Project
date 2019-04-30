@@ -47,6 +47,60 @@ static bool connected_to_tree = false;
 static Neighbour my_parent;
 
 /*---------------------------------------------------------------------------*/
+static void
+process_status_msg(Status_Msg* message, const rimeaddr_t *from) {
+  bool new_parent = true;
+  uint16_t rssi = packetbuf_attr(PACKETBUF_ATTR_RSSI);
+
+  if (my_parent.addr.u8[0] == from->u8[0] && my_parent.addr.u8[1] == from->u8[1]) {
+    /* If the message comes from the current parent, we store its new status */
+    my_parent.hops = message->hops;
+    my_parent.rssi = rssi;
+    return;
+  }
+  
+  if(connected_to_tree){
+    /* We store the new parent if it is closer (hops), or if the new possible parent 
+       and the current parent have the same hops number but the new one has a better 
+       signal strenght */
+    new_parent = (message->hops < my_parent.hops)
+                  || (message->hops == my_parent.hops && rssi > my_parent.rssi);
+  }
+
+  if(new_parent){
+    /* We store the new parent */
+    rimeaddr_copy(&(my_parent.addr), from);
+    my_parent.hops = message->hops;
+    my_parent.rssi = rssi;
+    connected_to_tree = true;
+  }
+
+}
+
+static void recv_uc(struct unicast_conn *c, const rimeaddr_t *from)
+{
+  uint8_t* message_type = (uint8_t *) packetbuf_dataptr();
+
+  switch(*message_type) {
+    case MT_DISCONNECTED:
+      printf("unicast message received : NODE DISCONNECTED !\n");
+      //TODO
+      break;
+
+    case MT_STATUS: ; 
+      printf("unicast message received : status\n");
+      Status_Msg* message = (Status_Msg *) packetbuf_dataptr();
+      process_status_msg(message, from);
+      break;
+      
+    default:
+      printf("unicast message received : UNKNOWN TYPE : %d\n", *message_type);
+      break;
+  }
+}
+static const struct unicast_callbacks unicast_callbacks = {recv_uc};
+static struct unicast_conn uc;
+/*---------------------------------------------------------------------------*/
 /* OPTIONAL: Sender history.
  * Detects duplicate callbacks at receiving nodes.
  * Duplicates appear when ack messages are lost. */
@@ -89,34 +143,8 @@ recv_runicast(struct runicast_conn *c, const rimeaddr_t *from, uint8_t seqno)
     e->seq = seqno;
   }
   
-  bool new_parent = true;
-  Status_Msg *message = (Status_Msg *) packetbuf_dataptr();
-  uint16_t rssi = packetbuf_attr(PACKETBUF_ATTR_RSSI);
-  printf("runicast message received from %d.%d, hops : %lu\n", 
-          from->u8[0], from->u8[1], message->hops);
-  
-  if (my_parent.addr.u8[0] == from->u8[0] && my_parent.addr.u8[1] == from->u8[1]) {
-    /* If the message comes from the current parent, we store its new status */
-    my_parent.hops = message->hops;
-    my_parent.rssi = rssi;
-    return;
-  }
-  
-  if(connected_to_tree){
-    /* We store the new parent if it is closer (hops), or if the new possible parent 
-       and the current parent have the same hops number but the new one has a better 
-       signal strenght */
-    new_parent = (message->hops < my_parent.hops)
-                  || (message->hops == my_parent.hops && rssi > my_parent.rssi);
-  }
-
-  if(new_parent){
-    /* We store the new parent */
-    rimeaddr_copy(&(my_parent.addr), from);
-    my_parent.hops = message->hops;
-    my_parent.rssi = rssi;
-    connected_to_tree = true;
-  }
+  printf("runicast message received from %d.%d", 
+          from->u8[0], from->u8[1]);
 }
 
 static void
@@ -145,13 +173,11 @@ static void process_parent_info_msg(Neighbour* neighbour_parent, const rimeaddr_
   printf("broadcast message received from %d.%d\n",
          from->u8[0], from->u8[1]);
   
-  /* Current node share its configuration if (and) :
-    - is not sending runicast
+  /* Current node shares its configuration if (and) :
     - is connected to the tree
     - the parent hops is less (or equal) than the neighbour hops
   */
-  if(!runicast_is_transmitting(&runicast)
-      && connected_to_tree 
+  if(connected_to_tree 
       && neighbour_parent->hops >= (my_parent.hops + 1)) {
     Status_Msg response;
 
@@ -161,10 +187,10 @@ static void process_parent_info_msg(Neighbour* neighbour_parent, const rimeaddr_
     packetbuf_copyfrom((const void *) &response, sizeof(response));
 
     /* The unicast receiver is the broadcast sender (from) : */
-    printf("%u.%u: sending runicast to address %u.%u\n",
+    printf("%u.%u: sending unicast to address %u.%u\n",
            rimeaddr_node_addr.u8[0], rimeaddr_node_addr.u8[1],
            from->u8[0], from->u8[1]);
-    runicast_send(&runicast, from, MAX_RETRANSMISSIONS);   
+    unicast_send(&uc, from);
   }
 }
 
@@ -200,12 +226,15 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
   static bool skip_broadcast = true;
   static bool is_root = false;
 
+  // TODO what is exithandler ? what about runicast ?
   PROCESS_EXITHANDLER(broadcast_close(&broadcast);)
+  PROCESS_EXITHANDLER(unicast_close(&uc);)
 
   PROCESS_BEGIN();
 
   broadcast_open(&broadcast, 129, &broadcast_call);
   runicast_open(&runicast, 144, &runicast_callbacks);
+  unicast_open(&uc, 146, &unicast_callbacks);
 
   list_init(history_table);
   memb_init(&history_mem);
