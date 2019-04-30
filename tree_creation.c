@@ -81,11 +81,20 @@ recv_runicast(struct runicast_conn *c, const rimeaddr_t *from, uint8_t seqno)
     /* Update existing history entry */
     e->seq = seqno;
   }
+  
   bool new_parent = true;
   Message *message = (Message *) packetbuf_dataptr();
   uint16_t rssi = packetbuf_attr(PACKETBUF_ATTR_RSSI);
   printf("runicast message received from %d.%d, hops : %lu\n", 
           from->u8[0], from->u8[1], message->hops);
+  
+  if (my_parent.addr.u8[0] == from->u8[0] && my_parent.addr.u8[1] == from->u8[1]) {
+    /* If the message comes from the current parent, we store its new status */
+    my_parent.hops = message->hops;
+    my_parent.rssi = rssi;
+    return;
+  }
+  
   if(connected_to_tree){
     /* We store the new parent if it is closer (hops), or if the new possible parent 
        and the current parent have the same hops number but the new one has a better 
@@ -93,13 +102,16 @@ recv_runicast(struct runicast_conn *c, const rimeaddr_t *from, uint8_t seqno)
     new_parent = (message->hops < my_parent.hops)
                   || (message->hops == my_parent.hops && rssi > my_parent.rssi);
   }
+
   if(new_parent){
+    /* We store the new parent */
     rimeaddr_copy(&(my_parent.addr), from);
     my_parent.hops = message->hops;
     my_parent.rssi = rssi;
     connected_to_tree = true;
   }
 }
+
 static void
 sent_runicast(struct runicast_conn *c, const rimeaddr_t *to, uint8_t retransmissions)
 {
@@ -129,28 +141,28 @@ broadcast_recv(struct broadcast_conn *c, const rimeaddr_t *from)
   printf("broadcast message received from %d.%d\n",
          from->u8[0], from->u8[1]);
   
-  /* Current nodes shares its configuration if (and) : 
-      - is not sending runicast
-      - is connected to the tree
-      - the parent hops is less (or equal) than the neighbour hops
-      - is not the neighbour's parent
-  */
-  if(!runicast_is_transmitting(&runicast) 
-      && connected_to_tree
-      && neighbour_parent->hops >= (my_parent.hops + 1)
-      && !rimeaddr_cmp(&(neighbour_parent->addr), &rimeaddr_node_addr)) {
-    Message response;
+  if(!runicast_is_transmitting(&runicast)){
+    /* Current node share its configuration if (or) :
+        - is the parent of the broadcast sender
+        - (and) :
+          - is connected to the tree
+          - has a beter configuration than the broadcast sender parent
+    */
+    if ((my_parent.addr.u8[0] == from->u8[0] && my_parent.addr.u8[1] == from->u8[1]) 
+        || (connected_to_tree && neighbour_parent->hops >= (my_parent.hops + 1))) {
+      Message response;
 
-    response.type = MT_INFORMATION;
-    response.hops = my_parent.hops + 1;
+      response.type = MT_INFORMATION;
+      response.hops = my_parent.hops + 1;
 
-    packetbuf_copyfrom((const void *) &response, sizeof(response));
+      packetbuf_copyfrom((const void *) &response, sizeof(response));
 
-    /* The unicast receiver is the broadcast sender (from) : */
-    printf("%u.%u: sending runicast to address %u.%u\n",
-           rimeaddr_node_addr.u8[0], rimeaddr_node_addr.u8[1],
-           from->u8[0], from->u8[1]);
-    runicast_send(&runicast, from, MAX_RETRANSMISSIONS);
+      /* The unicast receiver is the broadcast sender (from) : */
+      printf("%u.%u: sending runicast to address %u.%u\n",
+             rimeaddr_node_addr.u8[0], rimeaddr_node_addr.u8[1],
+             from->u8[0], from->u8[1]);
+      runicast_send(&runicast, from, MAX_RETRANSMISSIONS);
+    }   
   }
 }
 static const struct broadcast_callbacks broadcast_call = {broadcast_recv};
@@ -193,12 +205,16 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
     etimer_set(&et, CLOCK_SECOND * 4 + random_rand() % (CLOCK_SECOND * 4));
     PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
 
-    /* If not connected to root, send a broadcast message to get information
+    /* If not root, send a broadcast message to get information
        about neighbourhood */
     if (!is_root) {
+      /* Send broadcast message as faster as possible if not yet connected
+         to the tree */
       if (!connected_to_tree || !skip_broadcast) send_broadcast = true;
+      /* Else, skip one iteration before sending a new broadcast message */
       else skip_broadcast = !skip_broadcast;
     } 
+
     if (connected_to_tree) {
       printf("##### My parent is %d:%d, hops : %lu #####\n",
             my_parent.addr.u8[0], my_parent.addr.u8[1], my_parent.hops);
