@@ -17,8 +17,10 @@
 #include <stdint.h>
 
 /* MT == Message Type */
-#define MT_INFORMATION          0
-#define MT_DATA                 1
+#define MT_PARENT_INFO          0
+#define MT_STATUS               1
+#define MT_DISCONNECTED         2
+#define MT_DATA                 3
 
 // TODO : quid if node dead ?
 // TODO : comment code
@@ -29,11 +31,16 @@ typedef struct {
   uint16_t      rssi;
 } Neighbour;
 
-/* Message format */
+/* Message formats */
 typedef struct {
   uint8_t       type; 
   uint32_t      hops;
-} Message;
+} Status_Msg;
+
+typedef struct {
+  uint8_t       type;
+  Neighbour     parent;
+} Parent_Info_Msg;
 
 /* Global variables required */
 static bool connected_to_tree = false;
@@ -83,7 +90,7 @@ recv_runicast(struct runicast_conn *c, const rimeaddr_t *from, uint8_t seqno)
   }
   
   bool new_parent = true;
-  Message *message = (Message *) packetbuf_dataptr();
+  Status_Msg *message = (Status_Msg *) packetbuf_dataptr();
   uint16_t rssi = packetbuf_attr(PACKETBUF_ATTR_RSSI);
   printf("runicast message received from %d.%d, hops : %lu\n", 
           from->u8[0], from->u8[1], message->hops);
@@ -134,10 +141,7 @@ PROCESS(example_broadcast_process, "Broadcast example"); // TODO
 AUTOSTART_PROCESSES(&example_broadcast_process);
 
 /*---------------------------------------------------------------------------*/
-static void
-broadcast_recv(struct broadcast_conn *c, const rimeaddr_t *from)
-{
-  Neighbour *neighbour_parent = (Neighbour *) packetbuf_dataptr();
+static void process_parent_info_msg(Neighbour* neighbour_parent, const rimeaddr_t *from) {
   printf("broadcast message received from %d.%d\n",
          from->u8[0], from->u8[1]);
   
@@ -149,9 +153,9 @@ broadcast_recv(struct broadcast_conn *c, const rimeaddr_t *from)
   if(!runicast_is_transmitting(&runicast)
       && connected_to_tree 
       && neighbour_parent->hops >= (my_parent.hops + 1)) {
-    Message response;
+    Status_Msg response;
 
-    response.type = MT_INFORMATION;
+    response.type = MT_STATUS;
     response.hops = my_parent.hops + 1;
 
     packetbuf_copyfrom((const void *) &response, sizeof(response));
@@ -161,6 +165,28 @@ broadcast_recv(struct broadcast_conn *c, const rimeaddr_t *from)
            rimeaddr_node_addr.u8[0], rimeaddr_node_addr.u8[1],
            from->u8[0], from->u8[1]);
     runicast_send(&runicast, from, MAX_RETRANSMISSIONS);   
+  }
+}
+
+static void
+broadcast_recv(struct broadcast_conn *c, const rimeaddr_t *from)
+{
+  uint8_t* message_type = (uint8_t *) packetbuf_dataptr();
+
+  switch(*message_type) {
+    case MT_DISCONNECTED:
+      printf("broadcast message received : NODE DISCONNECTED !\n");
+      //TODO
+      break;
+
+    case MT_PARENT_INFO: ; 
+      Parent_Info_Msg* message = (Parent_Info_Msg *) packetbuf_dataptr();
+      process_parent_info_msg(&(message->parent), from);
+      break;
+      
+    default:
+      printf("broadcast message received : UNKNOWN TYPE : %d\n", *message_type);
+      break;
   }
 }
 static const struct broadcast_callbacks broadcast_call = {broadcast_recv};
@@ -220,7 +246,11 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
   
     /* Send message if asked */
     if (send_broadcast) {
-      packetbuf_copyfrom((const void *) &my_parent, sizeof(my_parent));
+      Parent_Info_Msg message;
+      message.type = MT_PARENT_INFO;
+      message.parent = my_parent;
+
+      packetbuf_copyfrom((const void *) &message, sizeof(message));
       broadcast_send(&broadcast);
       printf("broadcast message sent\n");
     }
