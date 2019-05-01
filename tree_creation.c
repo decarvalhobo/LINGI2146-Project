@@ -43,8 +43,11 @@ typedef struct {
 } Parent_Info_Msg;
 
 /* Global variables required */
+static int no_parent_news = 0;
 static bool connected_to_tree = false;
 static Neighbour my_parent;
+
+static void lost_parent();
 
 /*---------------------------------------------------------------------------*/
 static void
@@ -56,6 +59,8 @@ process_status_msg(Status_Msg* message, const rimeaddr_t *from) {
     /* If the message comes from the current parent, we store its new status */
     my_parent.hops = message->hops;
     my_parent.rssi = rssi;
+    no_parent_news = 0;
+    connected_to_tree = true;
     return;
   }
   
@@ -73,6 +78,7 @@ process_status_msg(Status_Msg* message, const rimeaddr_t *from) {
     my_parent.hops = message->hops;
     my_parent.rssi = rssi;
     connected_to_tree = true;
+    no_parent_news = 0;
   }
 
 }
@@ -87,6 +93,7 @@ static void recv_uc(struct unicast_conn *c, const rimeaddr_t *from)
       //TODO
       break;
 
+    case MT_PARENT_INFO:
     case MT_STATUS: ; 
       printf("unicast message received : status\n");
       Status_Msg* message = (Status_Msg *) packetbuf_dataptr();
@@ -137,8 +144,11 @@ broadcast_recv(struct broadcast_conn *c, const rimeaddr_t *from)
 
   switch(*message_type) {
     case MT_DISCONNECTED:
-      printf("broadcast message received : NODE DISCONNECTED !\n");
-      //TODO
+      printf("broadcast message received : node disconnected !\n");
+      if (rimeaddr_cmp(from, (const rimeaddr_t *) &my_parent.addr)) {
+        lost_parent();
+        printf("My parent is disconnected...\n");
+      } 
       break;
 
     case MT_PARENT_INFO: ; 
@@ -155,6 +165,24 @@ static const struct broadcast_callbacks broadcast_call = {broadcast_recv};
 static struct broadcast_conn broadcast;
 
 /*---------------------------------------------------------------------------*/
+static void reset_my_parent() {
+  my_parent.addr = rimeaddr_node_addr;
+  my_parent.hops = 100; // TODO fix ?
+  my_parent.rssi = 0;
+}
+
+static void lost_parent() {
+  connected_to_tree = false;
+  no_parent_news = 0;
+  reset_my_parent();
+  printf("NO MORE PARENT!\n");
+  uint8_t type = MT_DISCONNECTED;
+  packetbuf_copyfrom((const void *) &type, sizeof(type));
+  broadcast_send(&broadcast);
+  printf("broadcast message sent : Disconnected\n");
+}
+
+
 PROCESS_THREAD(example_broadcast_process, ev, data)
 {
   static struct etimer et;
@@ -170,12 +198,10 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
   broadcast_open(&broadcast, 129, &broadcast_call);
   unicast_open(&uc, 146, &unicast_callbacks);
 
+  reset_my_parent();
+
   /* By default, node 1.0 is the root */
   is_root = rimeaddr_node_addr.u8[0] == 1 && rimeaddr_node_addr.u8[1] == 0;
-
-  my_parent.addr = rimeaddr_node_addr;
-  my_parent.hops = 100; // TODO fix ?
-  my_parent.rssi = 0;
 
   if (is_root) {
     my_parent.hops = 0;
@@ -199,9 +225,24 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
       else skip_broadcast = !skip_broadcast;
     } 
 
-    if (connected_to_tree) {
-      printf("##### My parent is %d:%d, hops : %lu #####\n",
-            my_parent.addr.u8[0], my_parent.addr.u8[1], my_parent.hops);
+    if (!is_root && connected_to_tree) {
+      no_parent_news++;
+      if (no_parent_news > 2) {
+        lost_parent();
+      } else {
+        printf("##### My parent is %d:%d, hops : %lu #####\n",
+              my_parent.addr.u8[0], my_parent.addr.u8[1], my_parent.hops);
+      }
+    }
+
+    if (no_parent_news > 1) {
+      Parent_Info_Msg message;
+      message.type = MT_PARENT_INFO;
+      message.parent = my_parent;
+
+      packetbuf_copyfrom((const void *) &message, sizeof(message));
+      unicast_send(&uc, (const rimeaddr_t *) &my_parent.addr);
+      printf("unicast message sent to parent : need status update !\n");
     }
   
     /* Send message if asked */
