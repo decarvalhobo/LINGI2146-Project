@@ -20,6 +20,7 @@
 #define MT_DISCOVERY            0
 #define MT_STATUS               1
 #define MT_DISCONNECTION        2
+#define MT_DATA                 4
 
 typedef struct {
   rimeaddr_t    parent_addr;
@@ -37,10 +38,16 @@ typedef struct {
   Status        status;
 } Status_Msg;
 
+typedef struct {
+  uint8_t       type;
+  //TODO
+} Data_Msg;
+
 /* Global variables required */
-static bool connected_to_tree = false;
-static Status my_status;
-static uint8_t no_news_from_parent = 0;
+static bool     connected_to_tree = false;
+static bool     is_root = false;
+static Status   my_status;
+static uint8_t  no_news_from_parent = 0;
 
 static void process_status_msg(const rimeaddr_t *from, Status status, uint16_t rssi);
 static void send_broadcast(const void* msg, int size);
@@ -96,14 +103,24 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
       }
       break;
     case MT_STATUS: ;
-      Status_Msg* msg = (Status_Msg *) packetbuf_dataptr(); 
+      Status_Msg* status_msg = (Status_Msg *) packetbuf_dataptr(); 
       printf("Message received from %u.%u : status !\n", from->u8[0], from->u8[1]);
-      process_status_msg(from, msg->status, packetbuf_attr(PACKETBUF_ATTR_RSSI));
+      process_status_msg(from, status_msg->status, packetbuf_attr(PACKETBUF_ATTR_RSSI));
       break;
     case MT_DISCONNECTION: 
       printf("Message received from %u.%u : Disconnection !\n", from->u8[0], from->u8[1]);
       if (connected_to_tree && rimeaddr_cmp((const rimeaddr_t *) &my_status.parent_addr, from)) {
         parent_disconnection();
+      }
+      break;
+    case MT_DATA: ;
+      Data_Msg* data_msg = (Data_Msg *) packetbuf_dataptr(); 
+      printf("Message received from %u.%u : Data !\n", from->u8[0], from->u8[1]);
+      if (is_root) {
+        // TODO Antonio
+      } else if (connected_to_tree) {
+        send_unicast((const void*) data_msg, sizeof(*data_msg), 
+                     (const rimeaddr_t*) &my_status.parent_addr);
       }
       break;
     default:
@@ -174,7 +191,6 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
 {
   static struct etimer et;
   static int    timer = 4;
-  static bool   is_root = false;
 
   PROCESS_EXITHANDLER(broadcast_close(&broadcast);)
   PROCESS_EXITHANDLER(unicast_close(&uc);)
