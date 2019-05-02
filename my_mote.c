@@ -33,7 +33,7 @@ typedef struct {
 
 typedef struct {
   uint8_t       type; 
-  uint32_t      hops;
+  uint32_t      hops_to_root;
 } Status_Msg;
 
 /* Global variables required */
@@ -43,6 +43,18 @@ static Status my_status;
 
 static void send_broadcast(const void* msg, int size);
 static void send_unicast(const void* msg, int size, const rimeaddr_t* to);
+static void reset_status();
+
+static void process_status_msg(const rimeaddr_t *from, uint32_t hops, uint16_t rssi) {
+  if (!connected_to_tree) {
+    my_status.parent_addr = *from;
+    my_status.parent_rssi = rssi;
+    my_status.hops_to_root = hops;
+    connected_to_tree = true;
+    return;
+  }
+  // TODO : compare if better parent
+}
 
 static void process_message(const rimeaddr_t *from) {
   uint8_t* message_type = (uint8_t *) packetbuf_dataptr();
@@ -50,9 +62,24 @@ static void process_message(const rimeaddr_t *from) {
     case MT_DISCOVERY:
       printf("Message received from %u.%u : ask for discovery !\n",
               from->u8[0], from->u8[1]);
+      if (connected_to_tree) {
+        Status_Msg msg;
+        msg.type = MT_STATUS;
+        msg.hops_to_root = my_status.hops_to_root;
+        send_unicast((const void*) &msg, sizeof(msg), from);
+      }
+      break;
+    case MT_STATUS:
+      ; 
+      Status_Msg* msg = (Status_Msg *) packetbuf_dataptr(); 
+      printf("Message received from %u.%u : status ! hops : %d\n",
+              from->u8[0], from->u8[1], (int) msg->hops_to_root);
+      process_status_msg(from, msg->hops_to_root, packetbuf_attr(PACKETBUF_ATTR_RSSI));
       break;
     default:
-      printf("Message received");
+      printf("Message received from %u.%u : UNKOWN TYPE\n",
+              from->u8[0], from->u8[1]);
+      break;
   }
 }
 
@@ -86,6 +113,12 @@ static void send_unicast(const void* msg, int size, const rimeaddr_t* to){
   packetbuf_copyfrom(msg, size);
   unicast_send(&uc, to);
 }
+static void reset_status() {
+  connected_to_tree = false;
+  my_status.parent_addr = rimeaddr_null;
+  my_status.hops_to_root = 100; // TODO fix ?
+  my_status.parent_rssi = 0;
+}
 
 PROCESS_THREAD(example_broadcast_process, ev, data)
 {
@@ -100,6 +133,8 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
 
   broadcast_open(&broadcast, 129, &broadcast_call);
   unicast_open(&uc, 146, &unicast_callbacks);
+
+  reset_status();
 
   /* By default, node 1.0 is the root */
   is_root = rimeaddr_node_addr.u8[0] == 1 && rimeaddr_node_addr.u8[1] == 0;
@@ -121,6 +156,9 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
       msg.type = MT_DISCOVERY;
       send_broadcast((const void*) &msg, sizeof(msg));
       continue;
+    } else {
+      printf("Connected to tree, parent : %u.%u\n",
+            my_status.parent_addr.u8[0], my_status.parent_addr.u8[1]);
     }
 
   }
