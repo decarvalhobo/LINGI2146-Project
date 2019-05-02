@@ -2,7 +2,6 @@
 
 !.gitignore
 !README.md
-!tree_creation.c
 !my_mote.c
 !example_with_struct.c
 !Makefile
