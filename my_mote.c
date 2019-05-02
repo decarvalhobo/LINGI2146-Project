@@ -72,8 +72,7 @@ static void process_message(const rimeaddr_t *from) {
     case MT_STATUS:
       ; 
       Status_Msg* msg = (Status_Msg *) packetbuf_dataptr(); 
-      printf("Message received from %u.%u : status ! hops : %d\n",
-              from->u8[0], from->u8[1], (int) msg->hops_to_root);
+      printf("Message received from %u.%u : status !\n", from->u8[0], from->u8[1]);
       process_status_msg(from, msg->hops_to_root, packetbuf_attr(PACKETBUF_ATTR_RSSI));
       break;
     default:
@@ -106,10 +105,12 @@ static struct broadcast_conn broadcast;
 
 /*---------------------------------------------------------------------------*/
 static void send_broadcast(const void* msg, int size){
+  printf("Send broadcast message\n");
   packetbuf_copyfrom(msg, size);
   broadcast_send(&broadcast);
 }
 static void send_unicast(const void* msg, int size, const rimeaddr_t* to){
+  printf("Send unicast message to %u.%u\n", to->u8[0], to->u8[1]);//
   packetbuf_copyfrom(msg, size);
   unicast_send(&uc, to);
 }
