@@ -44,16 +44,35 @@ static Status my_status;
 static void send_broadcast(const void* msg, int size);
 static void send_unicast(const void* msg, int size, const rimeaddr_t* to);
 static void reset_status();
+static void broadcast_status();
 
 static void process_status_msg(const rimeaddr_t *from, uint32_t hops, uint16_t rssi) {
-  if (!connected_to_tree) {
-    my_status.parent_addr = *from;
+  bool is_new_parent = true;
+
+  if (rimeaddr_cmp(from, (const rimeaddr_t *) &my_status.parent_addr)) {
+    /* If the message comes from the current parent, we store its new status */
+    my_status.hops_to_root = hops + 1;
     my_status.parent_rssi = rssi;
-    my_status.hops_to_root = hops;
     connected_to_tree = true;
     return;
   }
-  // TODO : compare if better parent
+
+  if (connected_to_tree) {
+    /* We store the new parent if it is closer (hops), or if the new possible parent 
+       and the current parent have the same hops number but the new one has a better 
+       signal strenght */
+    is_new_parent = ((hops + 1) < my_status.hops_to_root)
+                    || ((hops + 1) == my_status.hops_to_root && rssi > my_status.parent_rssi);
+  }
+
+  if (is_new_parent) {
+    /* We store the new parent */
+    rimeaddr_copy(&(my_status.parent_addr), from);
+    my_status.hops_to_root = hops + 1;
+    my_status.parent_rssi = rssi;
+    connected_to_tree = true;
+    broadcast_status();
+  }
 }
 
 static void process_message(const rimeaddr_t *from) {
@@ -120,7 +139,10 @@ static void reset_status() {
   my_status.hops_to_root = 100; // TODO fix ?
   my_status.parent_rssi = 0;
 }
-
+static void broadcast_status() {
+  Status_Msg msg = {MT_STATUS, my_status.hops_to_root};
+  send_broadcast((const void *) &msg, sizeof(msg));
+}
 PROCESS_THREAD(example_broadcast_process, ev, data)
 {
   static struct etimer et;
@@ -160,6 +182,7 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
     } else {
       printf("Connected to tree, parent : %u.%u\n",
             my_status.parent_addr.u8[0], my_status.parent_addr.u8[1]);
+      broadcast_status();
     }
 
   }
