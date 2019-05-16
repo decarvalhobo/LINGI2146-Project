@@ -165,7 +165,7 @@ static void send_unicast(const void* msg, int size, const rimeaddr_t* to){
 static void reset_status() {
   connected_to_tree = false;
   my_status.parent_addr = rimeaddr_null;
-  my_status.hops_to_root = 100; // TODO fix ?
+  my_status.hops_to_root = INT32_MAX; // TODO fix ?
   my_status.parent_rssi = 0;
   no_news_from_parent = 0;
 }
