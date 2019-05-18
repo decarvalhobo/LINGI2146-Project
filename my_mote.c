@@ -20,7 +20,7 @@
 #define MT_DISCOVERY            0
 #define MT_STATUS               1
 #define MT_DISCONNECTION        2
-#define MT_DATA                 4
+#define MT_DATA                 3
 
 typedef struct {
   rimeaddr_t    parent_addr;
