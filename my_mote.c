@@ -2,6 +2,10 @@
 #include "net/rime.h"
 #include "random.h"
 
+#include <stdlib.h>
+#include <stdio.h>
+#include <mqtt.h>
+
 #include "dev/button-sensor.h"
 
 #include "dev/leds.h"
@@ -39,8 +43,11 @@ typedef struct {
 } Status_Msg;
 
 typedef struct {
-  uint8_t       type;
-  //TODO
+    uint8_t       type;
+    uint8_t       channel_size;
+    char*          channel_name;
+    uint8_t       data_size;
+    char*          data_value;
 } Data_Msg;
 
 /* Global variables required */
@@ -119,7 +126,7 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
       if (is_root) {
         // TODO Antonio
       } else if (connected_to_tree) {
-        send_unicast((const void*) data_msg, sizeof(*data_msg), 
+        send_unicast((const void*) data_msg, sizeof(*data_msg)+sizeof(char)*data_msg->channel_size+sizeof(char)*data_msg->data_size, 
                      (const rimeaddr_t*) &my_status.parent_addr);
       }
       break;
