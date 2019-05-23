@@ -4,7 +4,6 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <mqtt.h>
 
 #include "dev/button-sensor.h"
 
@@ -63,7 +62,26 @@ static void reset_status();
 static void broadcast_status();
 static void store_status(const rimeaddr_t *from, uint32_t hops, uint16_t rssi, bool broadcast);
 static void parent_disconnection();
+static void send_packet(Data_Msg* msg);
 
+/** DEBUG function */
+static void snd_test(){
+	Data_Msg dmsg;	
+	// Decode the packet //TODO
+	dmsg.type=3;
+	dmsg.channel_size = 5;
+	dmsg.channel_name ="Hello";
+	dmsg.data_size = 2;
+	dmsg.data_value = "42";
+ 	send_unicast((const void*) &dmsg, sizeof(dmsg)+ sizeof(char*) * dmsg.channel_size + sizeof(char*) * dmsg.data_size, (const rimeaddr_t*) 	&my_status.parent_addr);
+}
+/** END DEBUG function */
+
+/* sends the data message following topic;value */
+static void send_packet(Data_Msg* msg)
+{
+  printf( "%s;%s\n",msg->channel_name,msg->data_value);
+}
 static void process_status_msg(const rimeaddr_t *from, Status sender_status, uint16_t rssi) {
   bool is_new_parent = true;
 
@@ -99,8 +117,8 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
   uint8_t* message_type = (uint8_t *) packetbuf_dataptr();
   switch(*message_type) {
     case MT_DISCOVERY:
-      printf("Message received from %u.%u : ask for discovery !\n",
-              from->u8[0], from->u8[1]);
+      //printf("Message received from %u.%u : ask for discovery !\n",
+       //       from->u8[0], from->u8[1]);
       if (connected_to_tree) {
         Status_Msg msg = {MT_STATUS, my_status};
         send_unicast((const void*) &msg, sizeof(msg), from);
@@ -111,20 +129,20 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
       break;
     case MT_STATUS: ;
       Status_Msg* status_msg = (Status_Msg *) packetbuf_dataptr(); 
-      printf("Message received from %u.%u : status !\n", from->u8[0], from->u8[1]);
+      //printf("Message received from %u.%u : status !\n", from->u8[0], from->u8[1]);
       process_status_msg(from, status_msg->status, packetbuf_attr(PACKETBUF_ATTR_RSSI));
       break;
     case MT_DISCONNECTION: 
-      printf("Message received from %u.%u : Disconnection !\n", from->u8[0], from->u8[1]);
+      //printf("Message received from %u.%u : Disconnection !\n", from->u8[0], from->u8[1]);
       if (connected_to_tree && rimeaddr_cmp((const rimeaddr_t *) &my_status.parent_addr, from)) {
         parent_disconnection();
       }
       break;
     case MT_DATA: ;
       Data_Msg* data_msg = (Data_Msg *) packetbuf_dataptr(); 
-      printf("Message received from %u.%u : Data !\n", from->u8[0], from->u8[1]);
+      //printf("Message received from %u.%u : Data !\n", from->u8[0], from->u8[1]);
       if (is_root) {
-        // TODO Antonio
+	send_packet((Data_Msg*) data_msg);
       } else if (connected_to_tree) {
         send_unicast((const void*) data_msg, sizeof(*data_msg)+sizeof(char)*data_msg->channel_size+sizeof(char)*data_msg->data_size, 
                      (const rimeaddr_t*) &my_status.parent_addr);
@@ -160,12 +178,12 @@ static struct broadcast_conn broadcast;
 
 /*---------------------------------------------------------------------------*/
 static void send_broadcast(const void* msg, int size){
-  printf("Send broadcast message\n");
+  //printf("Send broadcast message\n");
   packetbuf_copyfrom(msg, size);
   broadcast_send(&broadcast);
 }
 static void send_unicast(const void* msg, int size, const rimeaddr_t* to){
-  printf("Send unicast message to %u.%u\n", to->u8[0], to->u8[1]);//
+  //printf("Send unicast message to %u.%u\n", to->u8[0], to->u8[1]);//
   packetbuf_copyfrom(msg, size);
   unicast_send(&uc, to);
 }
@@ -191,7 +209,7 @@ static void store_status(const rimeaddr_t *from, uint32_t hops, uint16_t rssi, b
 static void parent_disconnection() {
   reset_status();
   Basic_Msg msg = {MT_DISCONNECTION};
-  printf("/!\\ /!\\ Parent lost.\n");
+  //printf("/!\\ /!\\ Parent lost.\n");
   send_broadcast((const void *) &msg, sizeof(msg));
 }
 PROCESS_THREAD(example_broadcast_process, ev, data)
@@ -240,10 +258,11 @@ PROCESS_THREAD(example_broadcast_process, ev, data)
         send_unicast((const void*) &msg, sizeof(msg), (const rimeaddr_t*) &my_status.parent_addr);
       }
       no_news_from_parent++;
+      snd_test();
     }
-
-    printf("### Connected to tree, parent : %u.%u ###\n",
-          my_status.parent_addr.u8[0], my_status.parent_addr.u8[1]);
+	
+    //printf("### Connected to tree, parent : %u.%u ###\n",
+     //     my_status.parent_addr.u8[0], my_status.parent_addr.u8[1]);
     broadcast_status();
 
   }
