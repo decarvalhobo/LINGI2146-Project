@@ -5,5 +5,7 @@
 !my_mote.c
 !example_with_struct.c
 !Makefile
+!client_pyt.py
+!Gateway_README.txt
 
 */*
