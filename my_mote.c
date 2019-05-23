@@ -164,8 +164,8 @@ static const struct unicast_callbacks unicast_callbacks = {recv_uc};
 static struct unicast_conn uc;
 /*---------------------------------------------------------------------------*/
 
-PROCESS(example_broadcast_process, "Broadcast example"); // TODO
-AUTOSTART_PROCESSES(&example_broadcast_process);
+PROCESS(manage_motes_network, "Manage the motes network");
+AUTOSTART_PROCESSES(&manage_motes_network);
 
 /*---------------------------------------------------------------------------*/
 static void
@@ -212,7 +212,7 @@ static void parent_disconnection() {
   //printf("/!\\ /!\\ Parent lost.\n");
   send_broadcast((const void *) &msg, sizeof(msg));
 }
-PROCESS_THREAD(example_broadcast_process, ev, data)
+PROCESS_THREAD(manage_motes_network, ev, data)
 {
   static struct etimer et;
   static int    timer = 4;
