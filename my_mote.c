@@ -165,7 +165,8 @@ static struct unicast_conn uc;
 /*---------------------------------------------------------------------------*/
 
 PROCESS(manage_motes_network, "Manage the motes network");
-AUTOSTART_PROCESSES(&manage_motes_network);
+PROCESS(data_sender, "Send data");
+AUTOSTART_PROCESSES(&manage_motes_network, &data_sender);
 
 /*---------------------------------------------------------------------------*/
 static void
@@ -270,3 +271,18 @@ PROCESS_THREAD(manage_motes_network, ev, data)
   PROCESS_END();
 }
 /*---------------------------------------------------------------------------*/
+PROCESS_THREAD(data_sender, ev, data)
+{   
+  static struct etimer et;
+  static int timer = 5;
+  PROCESS_EXITHANDLER(goto exit);
+  PROCESS_BEGIN();
+ 
+  while(1) {
+    etimer_set(&et, CLOCK_SECOND * timer + random_rand() % (CLOCK_SECOND * timer));
+    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
+  }
+ 
+  exit: ;
+    PROCESS_END();
+}
