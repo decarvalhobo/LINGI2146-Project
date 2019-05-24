@@ -238,6 +238,8 @@ static void reset_status() {
   my_status.parent_rssi = 0;
   my_status.root_version = 0;
   no_news_from_parent = 0;
+  root_status.temp_required = true;
+  root_status.hum_required = true;
 }
 static void broadcast_status() {
   Status_Msg msg = {MT_STATUS, my_status};
@@ -376,8 +378,8 @@ PROCESS_THREAD(data_sender, ev, data)
 
     /* If the timer is expired and the mote is connected to the tree, send data */
     if (etimer_expired(&et) && connected_to_tree) {
-      send_new_temp_data();
-      send_new_hum_data();
+      if (root_status.temp_required) send_new_temp_data();
+      if (root_status.hum_required) send_new_hum_data();
     }
   }
  
