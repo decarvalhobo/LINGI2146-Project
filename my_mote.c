@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 #include "dev/button-sensor.h"
+#include "dev/serial-line.h"
 
 #include "dev/leds.h"
 
@@ -19,11 +20,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define DELAY_BETWEEN_DATA      5
 #define PERIOD_DATA_BY_DEFAULT  true
 
 #define TEMP_CHANNEL_NAME       "temp"
 #define MIN_RAND_TEMP           -20
 #define MAX_RAND_TEMP           80
+
+#define HUM_CHANNEL_NAME       "hum"
 
 /* MT == Message Type */
 #define MT_DISCOVERY            0
@@ -39,6 +43,7 @@ typedef struct {
 
 typedef struct {
   int           temperature;
+  int           humidity;
 } Data_History;
 
 /* Message formats */
@@ -60,7 +65,6 @@ typedef struct {
 
 /* Global variables required */
 static bool         connected_to_tree = false;
-static bool         is_root = false;
 static bool         periodic_data = PERIOD_DATA_BY_DEFAULT;
 static uint8_t      no_news_from_parent = 0;
 static Status       my_status;
@@ -75,6 +79,9 @@ static void store_status(const rimeaddr_t *from, uint32_t hops, uint16_t rssi, b
 static void parent_disconnection();
 static void print_data_msg(Data_Msg* msg);
 
+static bool is_the_root() {
+  return rimeaddr_node_addr.u8[0] == 1 && rimeaddr_node_addr.u8[1] == 0;
+}
 static void print_data_msg(Data_Msg* msg)
 {
   /* FORMAT : ;<mote_addr>;<channel name>;<data value> */
@@ -143,7 +150,7 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
     case MT_DATA: ;
       Data_Msg* data_msg = (Data_Msg *) packetbuf_dataptr(); 
       printf("Message received from %u.%u : Data !\n", from->u8[0], from->u8[1]);
-      if (is_root) {
+      if (is_the_root()) {
 	    print_data_msg((Data_Msg*) data_msg);
       } else if (connected_to_tree) {
         send_unicast((const void*) data_msg, sizeof(*data_msg), 
@@ -168,7 +175,8 @@ static struct unicast_conn uc;
 
 PROCESS(manage_motes_network, "Manage the motes network");
 PROCESS(data_sender, "Send data");
-AUTOSTART_PROCESSES(&manage_motes_network, &data_sender);
+PROCESS(test_serial, "Serial line test process");
+AUTOSTART_PROCESSES(&manage_motes_network, &data_sender, &test_serial);
 
 /*---------------------------------------------------------------------------*/
 static void
@@ -230,10 +238,7 @@ PROCESS_THREAD(manage_motes_network, ev, data)
 
   reset_status();
 
-  /* By default, node 1.0 is the root */
-  is_root = rimeaddr_node_addr.u8[0] == 1 && rimeaddr_node_addr.u8[1] == 0;
-
-  if (is_root) {
+  if (is_the_root()) {
     my_status.hops_to_root = 0;
     connected_to_tree = true;
   } 
@@ -252,7 +257,7 @@ PROCESS_THREAD(manage_motes_network, ev, data)
       continue;
     } 
     
-    if (!is_root) {
+    if (!is_the_root()) {
       if (no_news_from_parent > 2) {
         parent_disconnection();
         continue;
@@ -272,13 +277,13 @@ PROCESS_THREAD(manage_motes_network, ev, data)
   PROCESS_END();
 }
 /*---------------------------------------------------------------------------*/
-static int get_rand_temp(){
+static int get_rand(int min, int max){
   unsigned short r;
   int value;
   r = random_rand();
   value = (int) r;
   value = value < 0 ? -1 * value : value;
-  value = (value % ((MAX_RAND_TEMP) - (MIN_RAND_TEMP) + 1)) + (MIN_RAND_TEMP);
+  value = (value % (max - min + 1)) + min;
   return value;
 }
 static void send_new_temp_data(){
@@ -287,7 +292,7 @@ static void send_new_temp_data(){
   dmsg.type = MT_DATA;
   dmsg.channel_name = TEMP_CHANNEL_NAME;
   dmsg.mote_addr_from = rimeaddr_node_addr;
-  dmsg.data_value = get_rand_temp();
+  dmsg.data_value = get_rand(MIN_RAND_TEMP, MAX_RAND_TEMP);
 
   if (!periodic_data && dmsg.data_value == my_data_history.temperature) {
     return;
@@ -296,10 +301,27 @@ static void send_new_temp_data(){
   my_data_history.temperature = dmsg.data_value;
   send_unicast((const void*) &dmsg, sizeof(dmsg), (const rimeaddr_t*) &my_status.parent_addr);
 }
+static void send_new_hum_data(){
+  Data_Msg dmsg;
+
+  dmsg.type = MT_DATA;
+  dmsg.channel_name = HUM_CHANNEL_NAME;
+  dmsg.mote_addr_from = rimeaddr_node_addr;
+  dmsg.data_value = get_rand(0, 100);
+
+  if (!periodic_data && dmsg.data_value == my_data_history.humidity) {
+    return;
+  }
+
+  my_data_history.humidity = dmsg.data_value;
+  send_unicast((const void*) &dmsg, sizeof(dmsg), (const rimeaddr_t*) &my_status.parent_addr);
+}
 PROCESS_THREAD(data_sender, ev, data)
 {   
   static struct etimer et;
-  static int    timer = 5;
+  static int    timer = DELAY_BETWEEN_DATA;
+  
+  if (is_the_root()) return 0; // the root doesn't create any data (TODO: really ?)
 
   PROCESS_EXITHANDLER(goto exit);
   PROCESS_BEGIN();
@@ -309,8 +331,6 @@ PROCESS_THREAD(data_sender, ev, data)
   while(1) {
     etimer_set(&et, CLOCK_SECOND * timer + random_rand() % (CLOCK_SECOND * timer));
     PROCESS_WAIT_EVENT();
-
-    if (is_root) goto exit; // the root doesn't create any data (TODO: really ?)
 
     /* If the button has been pressed, change the data sending mode */
     if(ev == sensors_event) {
@@ -323,9 +343,24 @@ PROCESS_THREAD(data_sender, ev, data)
     /* If the timer is expired and the mote is connected to the tree, send data */
     if (etimer_expired(&et) && connected_to_tree) {
       send_new_temp_data();
+      send_new_hum_data();
     }
   }
  
   exit: ;
     PROCESS_END();
+}
+PROCESS_THREAD(test_serial, ev, data)
+{
+  if (!is_the_root()) return 0;
+
+  PROCESS_BEGIN();
+
+  for(;;) {
+    PROCESS_YIELD();
+    if(ev == serial_line_event_message) {
+      printf("received line: %s\n", (char *)data);
+    }
+  }
+  PROCESS_END();
 }
