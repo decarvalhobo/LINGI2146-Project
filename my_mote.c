@@ -19,6 +19,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define TEMP_CHANNEL_NAME       "temp"
+#define MIN_RAND_TEMP           -20
+#define MAX_RAND_TEMP           80
+
+
 /* MT == Message Type */
 #define MT_DISCOVERY            0
 #define MT_STATUS               1
@@ -42,11 +47,10 @@ typedef struct {
 } Status_Msg;
 
 typedef struct {
-    uint8_t       type;
-    uint8_t       channel_size;
-    char*          channel_name;
-    uint8_t       data_size;
-    char*          data_value;
+    uint8_t     type;
+    char*       channel_name;
+    rimeaddr_t  mote_addr_from;
+    int         data_value;
 } Data_Msg;
 
 /* Global variables required */
@@ -62,25 +66,16 @@ static void reset_status();
 static void broadcast_status();
 static void store_status(const rimeaddr_t *from, uint32_t hops, uint16_t rssi, bool broadcast);
 static void parent_disconnection();
-static void send_packet(Data_Msg* msg);
+static void print_data_msg(Data_Msg* msg);
 
-/** DEBUG function */
-static void snd_test(){
-	Data_Msg dmsg;	
-	// Decode the packet //TODO
-	dmsg.type=3;
-	dmsg.channel_size = 5;
-	dmsg.channel_name ="Hello";
-	dmsg.data_size = 2;
-	dmsg.data_value = "42";
- 	send_unicast((const void*) &dmsg, sizeof(dmsg)+ sizeof(char*) * dmsg.channel_size + sizeof(char*) * dmsg.data_size, (const rimeaddr_t*) 	&my_status.parent_addr);
-}
-/** END DEBUG function */
-
-/* sends the data message following topic;value */
-static void send_packet(Data_Msg* msg)
+static void print_data_msg(Data_Msg* msg)
 {
-  printf( "%s;%s\n",msg->channel_name,msg->data_value);
+  /* FORMAT : <mote_addr>;<channel name>;<data value> */
+  printf("%u:%u;%s;%d\n",
+          msg->mote_addr_from.u8[0], 
+          msg->mote_addr_from.u8[1], 
+          msg->channel_name, 
+          msg->data_value);
 }
 static void process_status_msg(const rimeaddr_t *from, Status sender_status, uint16_t rssi) {
   bool is_new_parent = true;
@@ -142,9 +137,9 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
       Data_Msg* data_msg = (Data_Msg *) packetbuf_dataptr(); 
       //printf("Message received from %u.%u : Data !\n", from->u8[0], from->u8[1]);
       if (is_root) {
-	send_packet((Data_Msg*) data_msg);
+	    print_data_msg((Data_Msg*) data_msg);
       } else if (connected_to_tree) {
-        send_unicast((const void*) data_msg, sizeof(*data_msg)+sizeof(char)*data_msg->channel_size+sizeof(char)*data_msg->data_size, 
+        send_unicast((const void*) data_msg, sizeof(*data_msg), 
                      (const rimeaddr_t*) &my_status.parent_addr);
       }
       break;
@@ -259,7 +254,6 @@ PROCESS_THREAD(manage_motes_network, ev, data)
         send_unicast((const void*) &msg, sizeof(msg), (const rimeaddr_t*) &my_status.parent_addr);
       }
       no_news_from_parent++;
-      snd_test();
     }
 	
     //printf("### Connected to tree, parent : %u.%u ###\n",
@@ -271,16 +265,43 @@ PROCESS_THREAD(manage_motes_network, ev, data)
   PROCESS_END();
 }
 /*---------------------------------------------------------------------------*/
+static int get_rand_temp(){
+  unsigned short r;
+  int value;
+  r = random_rand();
+  value = (int) r;
+  value = value < 0 ? -1 * value : value;
+  value = (value % ((MAX_RAND_TEMP) - (MIN_RAND_TEMP) + 1)) + (MIN_RAND_TEMP);
+  return value;
+}
+static void send_new_temp_data(){
+  Data_Msg dmsg;
+
+  dmsg.type = MT_DATA;
+  dmsg.channel_name = TEMP_CHANNEL_NAME;
+  dmsg.mote_addr_from = rimeaddr_node_addr;
+  dmsg.data_value = get_rand_temp();
+
+  send_unicast((const void*) &dmsg, sizeof(dmsg), (const rimeaddr_t*) &my_status.parent_addr);
+}
 PROCESS_THREAD(data_sender, ev, data)
 {   
   static struct etimer et;
-  static int timer = 5;
+  static int    timer = 5;
+
   PROCESS_EXITHANDLER(goto exit);
   PROCESS_BEGIN();
- 
+
+  random_init(rimeaddr_node_addr.u8[0] + rimeaddr_node_addr.u8[1]);
+
   while(1) {
     etimer_set(&et, CLOCK_SECOND * timer + random_rand() % (CLOCK_SECOND * timer));
     PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
+
+    if (!connected_to_tree) continue;   // skip the loop, wait for tree connection
+    else if (is_root) goto exit;        // the root doesn't create any data (TODO: really ?)
+
+    send_new_temp_data();
   }
  
   exit: ;
