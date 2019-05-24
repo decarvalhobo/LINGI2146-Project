@@ -22,6 +22,7 @@ def main(client_socket):
 			for part in tmp:
 				topic_value = part.split(";")
 				if(len(topic_value) == 4): # ;IP_ADDR;TOPIC;VALUE
+					send_stop(client_socket,topic_value[2]) #uncomment to test to unsubscribe
 					myCmd = 'mosquitto_pub -h ' + BROKER_ADDR + ' -t ' + topic_value[2] + ' -m ' + topic_value[3]
 					# execute the command that publishes the data received to the specified topic
 					# the mosquitto clients must be installed : apt-get install mosquitto-clients 
@@ -34,8 +35,10 @@ def main(client_socket):
 
 	
 def send_stop(client_socket,topic_name):
-	client_socket.send(u"<w>"+topic_name+"</w>")
-		
+	client_socket.send("0:"+topic_name+"\n")
 
+def send_restart(client_socket,topic_name):
+	client_socket.send("1:"+topic_name+"\n")
+		
 #send_stop(client_socket,"temperature")
 main(client_socket)	
