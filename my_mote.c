@@ -34,21 +34,21 @@
 #define MT_STATUS               1
 #define MT_DISCONNECTION        2
 #define MT_DATA                 3
-#define MT_ROOT_STATUS          4
-#define MT_NEED_ROOT_STATUS     5
+#define MT_BROKER_STATUS        4
+#define MT_NEED_BROKER_STATUS   5
 
 typedef struct {
   rimeaddr_t    parent_addr;
   uint16_t      parent_rssi;
   int32_t       hops_to_root;
-  unsigned long root_version;
-} Status;
+  unsigned long broker_version;
+} Mote_Status;
 
 typedef struct {
   unsigned long version;
   bool          temp_required;
   bool          hum_required;
-} Root_Status;
+} Broker_Status;
 
 typedef struct {
   int           temperature;
@@ -62,13 +62,13 @@ typedef struct {
 
 typedef struct {
   uint8_t       type; 
-  Status        status;
-} Status_Msg;
+  Mote_Status   status;
+} Mote_Status_Msg;
 
 typedef struct {
   uint8_t       type;
-  Root_Status   rstatus;
-} Root_Status_Msg;
+  Broker_Status br_status;
+} Broker_Status_Msg;
 
 typedef struct {
     uint8_t     type;
@@ -78,14 +78,14 @@ typedef struct {
 } Data_Msg;
 
 /* Global variables required */
-static bool         connected_to_tree = false;
-static bool         periodic_data = PERIOD_DATA_BY_DEFAULT;
-static uint8_t      no_news_from_parent = 0;
-static Status       my_status;
-static Root_Status  root_status;
-static Data_History my_data_history;
+static bool             connected_to_tree = false;
+static bool             periodic_data = PERIOD_DATA_BY_DEFAULT;
+static uint8_t          no_news_from_parent = 0;
+static Mote_Status      my_status;
+static Broker_Status    broker_status;
+static Data_History     my_data_history;
 
-static void process_status_msg(const rimeaddr_t *from, Status status, uint16_t rssi);
+static void process_status_msg(const rimeaddr_t *from, Mote_Status status, uint16_t rssi);
 static void send_broadcast(const void* msg, int size);
 static void send_unicast(const void* msg, int size, const rimeaddr_t* to);
 static void reset_status();
@@ -106,7 +106,7 @@ static void print_data_msg(Data_Msg* msg)
           msg->channel_name, 
           msg->data_value);
 }
-static void process_status_msg(const rimeaddr_t *from, Status sender_status, uint16_t rssi) {
+static void process_status_msg(const rimeaddr_t *from, Mote_Status sender_status, uint16_t rssi) {
   bool is_new_parent = true;
 
   if (rimeaddr_cmp((const rimeaddr_t*) &rimeaddr_node_addr, 
@@ -144,7 +144,7 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
       printf("Message received from %u.%u : ask for discovery !\n",
               from->u8[0], from->u8[1]);
       if (connected_to_tree) {
-        Status_Msg msg = {MT_STATUS, my_status};
+        Mote_Status_Msg msg = {MT_STATUS, my_status};
         send_unicast((const void*) &msg, sizeof(msg), from);
       } else if (!connected_to_tree && is_unicast) {
         Basic_Msg msg = {MT_DISCONNECTION};
@@ -152,10 +152,10 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
       }
       break;
     case MT_STATUS: ;
-      Status_Msg* status_msg = (Status_Msg *) packetbuf_dataptr(); 
+      Mote_Status_Msg* status_msg = (Mote_Status_Msg *) packetbuf_dataptr(); 
       printf("Message received from %u.%u : status !\n", from->u8[0], from->u8[1]);
-      if (status_msg->status.root_version > root_status.version) {
-        Basic_Msg bmsg = {MT_NEED_ROOT_STATUS};  
+      if (status_msg->status.broker_version > broker_status.version) {
+        Basic_Msg bmsg = {MT_NEED_BROKER_STATUS};  
         send_unicast((const void*) &bmsg, sizeof(bmsg), from);
       }
       process_status_msg(from, status_msg->status, packetbuf_attr(PACKETBUF_ATTR_RSSI));
@@ -176,18 +176,18 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
                      (const rimeaddr_t*) &my_status.parent_addr);
       }
       break;
-    case MT_ROOT_STATUS: ;
-      Root_Status_Msg* rstatus_msg = (Root_Status_Msg *) packetbuf_dataptr(); 
-      printf("Message received from %u.%u : Root status !\n", from->u8[0], from->u8[1]);
-      if (rstatus_msg->rstatus.version > root_status.version) {
-        root_status = rstatus_msg->rstatus;
-        my_status.root_version = root_status.version;
-        send_broadcast((const void *) rstatus_msg, sizeof(*rstatus_msg));
+    case MT_BROKER_STATUS: ;
+      Broker_Status_Msg* br_status_msg = (Broker_Status_Msg *) packetbuf_dataptr(); 
+      printf("Message received from %u.%u : Broker status !\n", from->u8[0], from->u8[1]);
+      if (br_status_msg->br_status.version > broker_status.version) {
+        broker_status = br_status_msg->br_status;
+        my_status.broker_version = broker_status.version;
+        send_broadcast((const void *) br_status_msg, sizeof(*br_status_msg));
       }
       break;
-    case MT_NEED_ROOT_STATUS:
-      printf("Message received from %u.%u : Need root status !\n", from->u8[0], from->u8[1]);
-      Root_Status_Msg rsts_msg = {MT_ROOT_STATUS, root_status};
+    case MT_NEED_BROKER_STATUS:
+      printf("Message received from %u.%u : Need broker status !\n", from->u8[0], from->u8[1]);
+      Broker_Status_Msg rsts_msg = {MT_BROKER_STATUS, broker_status};
       send_unicast((const void*) &rsts_msg, sizeof(rsts_msg), from);
       break;
     default:
@@ -236,13 +236,13 @@ static void reset_status() {
   my_status.parent_addr = rimeaddr_null;
   my_status.hops_to_root = INT32_MAX;
   my_status.parent_rssi = 0;
-  my_status.root_version = 0;
+  my_status.broker_version = 0;
   no_news_from_parent = 0;
-  root_status.temp_required = true;
-  root_status.hum_required = true;
+  broker_status.temp_required = true;
+  broker_status.hum_required = true;
 }
 static void broadcast_status() {
-  Status_Msg msg = {MT_STATUS, my_status};
+  Mote_Status_Msg msg = {MT_STATUS, my_status};
   send_broadcast((const void *) &msg, sizeof(msg));
 }
 static void store_status(const rimeaddr_t *from, uint32_t hops, uint16_t rssi, bool broadcast) {
@@ -378,8 +378,8 @@ PROCESS_THREAD(data_sender, ev, data)
 
     /* If the timer is expired and the mote is connected to the tree, send data */
     if (etimer_expired(&et) && connected_to_tree) {
-      if (root_status.temp_required) send_new_temp_data();
-      if (root_status.hum_required) send_new_hum_data();
+      if (broker_status.temp_required) send_new_temp_data();
+      if (broker_status.hum_required) send_new_hum_data();
     }
   }
  
@@ -402,14 +402,14 @@ PROCESS_THREAD(test_serial, ev, data)
       subject = strtok (NULL, ":");
 
       if (strcmp(subject, TEMP_CHANNEL_NAME) == 0) {
-        root_status.temp_required = strcmp(value, "1") == 0;
+        broker_status.temp_required = strcmp(value, "1") == 0;
       } else if (strcmp(subject, HUM_CHANNEL_NAME) == 0) {
-        root_status.hum_required = strcmp(value, "1") == 0;
+        broker_status.hum_required = strcmp(value, "1") == 0;
       }
-      root_status.version++;
+      broker_status.version++;
 
-      Root_Status_Msg rstatus_msg = {MT_ROOT_STATUS, root_status};
-      send_broadcast((const void*) &rstatus_msg, sizeof(rstatus_msg));
+      Broker_Status_Msg br_status_msg = {MT_BROKER_STATUS, broker_status};
+      send_broadcast((const void*) &br_status_msg, sizeof(br_status_msg));
     }
   }
 
