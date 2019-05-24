@@ -34,12 +34,21 @@
 #define MT_STATUS               1
 #define MT_DISCONNECTION        2
 #define MT_DATA                 3
+#define MT_ROOT_STATUS          4
+#define MT_NEED_ROOT_STATUS     5
 
 typedef struct {
   rimeaddr_t    parent_addr;
   uint16_t      parent_rssi;
   int32_t       hops_to_root;
+  unsigned long root_version;
 } Status;
+
+typedef struct {
+  unsigned long version;
+  bool          temp_required;
+  bool          hum_required;
+} Root_Status;
 
 typedef struct {
   int           temperature;
@@ -57,6 +66,11 @@ typedef struct {
 } Status_Msg;
 
 typedef struct {
+  uint8_t       type;
+  Root_Status   rstatus;
+} Root_Status_Msg;
+
+typedef struct {
     uint8_t     type;
     char*       channel_name;
     rimeaddr_t  mote_addr_from;
@@ -68,6 +82,7 @@ static bool         connected_to_tree = false;
 static bool         periodic_data = PERIOD_DATA_BY_DEFAULT;
 static uint8_t      no_news_from_parent = 0;
 static Status       my_status;
+static Root_Status  root_status;
 static Data_History my_data_history;
 
 static void process_status_msg(const rimeaddr_t *from, Status status, uint16_t rssi);
@@ -139,6 +154,10 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
     case MT_STATUS: ;
       Status_Msg* status_msg = (Status_Msg *) packetbuf_dataptr(); 
       printf("Message received from %u.%u : status !\n", from->u8[0], from->u8[1]);
+      if (status_msg->status.root_version > root_status.version) {
+        Basic_Msg bmsg = {MT_NEED_ROOT_STATUS};  
+        send_unicast((const void*) &bmsg, sizeof(bmsg), from);
+      }
       process_status_msg(from, status_msg->status, packetbuf_attr(PACKETBUF_ATTR_RSSI));
       break;
     case MT_DISCONNECTION: 
@@ -156,6 +175,20 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
         send_unicast((const void*) data_msg, sizeof(*data_msg), 
                      (const rimeaddr_t*) &my_status.parent_addr);
       }
+      break;
+    case MT_ROOT_STATUS: ;
+      Root_Status_Msg* rstatus_msg = (Root_Status_Msg *) packetbuf_dataptr(); 
+      printf("Message received from %u.%u : Root status !\n", from->u8[0], from->u8[1]);
+      if (rstatus_msg->rstatus.version > root_status.version) {
+        root_status = rstatus_msg->rstatus;
+        my_status.root_version = root_status.version;
+        send_broadcast((const void *) rstatus_msg, sizeof(*rstatus_msg));
+      }
+      break;
+    case MT_NEED_ROOT_STATUS:
+      printf("Message received from %u.%u : Need root status !\n", from->u8[0], from->u8[1]);
+      Root_Status_Msg rsts_msg = {MT_ROOT_STATUS, root_status};
+      send_unicast((const void*) &rsts_msg, sizeof(rsts_msg), from);
       break;
     default:
       printf("Message received from %u.%u : UNKOWN TYPE\n",
@@ -203,6 +236,7 @@ static void reset_status() {
   my_status.parent_addr = rimeaddr_null;
   my_status.hops_to_root = INT32_MAX;
   my_status.parent_rssi = 0;
+  my_status.root_version = 0;
   no_news_from_parent = 0;
 }
 static void broadcast_status() {
@@ -359,8 +393,23 @@ PROCESS_THREAD(test_serial, ev, data)
   for(;;) {
     PROCESS_YIELD();
     if(ev == serial_line_event_message) {
-      printf("received line: %s\n", (char *)data);
+      char *str = (char*) data;
+      char *value, *subject;
+
+      value = strtok (str,":");
+      subject = strtok (NULL, ":");
+
+      if (strcmp(subject, TEMP_CHANNEL_NAME) == 0) {
+        root_status.temp_required = strcmp(value, "1") == 0;
+      } else if (strcmp(subject, HUM_CHANNEL_NAME) == 0) {
+        root_status.hum_required = strcmp(value, "1") == 0;
+      }
+      root_status.version++;
+
+      Root_Status_Msg rstatus_msg = {MT_ROOT_STATUS, root_status};
+      send_broadcast((const void*) &rstatus_msg, sizeof(rstatus_msg));
     }
   }
+
   PROCESS_END();
 }
