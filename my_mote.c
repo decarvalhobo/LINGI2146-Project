@@ -19,11 +19,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define DELAY_BETWEEN_DATA      5
 #define PERIOD_DATA_BY_DEFAULT  true
 
 #define TEMP_CHANNEL_NAME       "temp"
 #define MIN_RAND_TEMP           -20
 #define MAX_RAND_TEMP           80
+
+#define HUM_CHANNEL_NAME       "hum"
 
 /* MT == Message Type */
 #define MT_DISCOVERY            0
@@ -39,6 +42,7 @@ typedef struct {
 
 typedef struct {
   int           temperature;
+  int           humidity;
 } Data_History;
 
 /* Message formats */
@@ -272,13 +276,13 @@ PROCESS_THREAD(manage_motes_network, ev, data)
   PROCESS_END();
 }
 /*---------------------------------------------------------------------------*/
-static int get_rand_temp(){
+static int get_rand(int min, int max){
   unsigned short r;
   int value;
   r = random_rand();
   value = (int) r;
   value = value < 0 ? -1 * value : value;
-  value = (value % ((MAX_RAND_TEMP) - (MIN_RAND_TEMP) + 1)) + (MIN_RAND_TEMP);
+  value = (value % (max - min + 1)) + min;
   return value;
 }
 static void send_new_temp_data(){
@@ -287,7 +291,7 @@ static void send_new_temp_data(){
   dmsg.type = MT_DATA;
   dmsg.channel_name = TEMP_CHANNEL_NAME;
   dmsg.mote_addr_from = rimeaddr_node_addr;
-  dmsg.data_value = get_rand_temp();
+  dmsg.data_value = get_rand(MIN_RAND_TEMP, MAX_RAND_TEMP);
 
   if (!periodic_data && dmsg.data_value == my_data_history.temperature) {
     return;
@@ -296,10 +300,25 @@ static void send_new_temp_data(){
   my_data_history.temperature = dmsg.data_value;
   send_unicast((const void*) &dmsg, sizeof(dmsg), (const rimeaddr_t*) &my_status.parent_addr);
 }
+static void send_new_hum_data(){
+  Data_Msg dmsg;
+
+  dmsg.type = MT_DATA;
+  dmsg.channel_name = HUM_CHANNEL_NAME;
+  dmsg.mote_addr_from = rimeaddr_node_addr;
+  dmsg.data_value = get_rand(0, 100);
+
+  if (!periodic_data && dmsg.data_value == my_data_history.humidity) {
+    return;
+  }
+
+  my_data_history.humidity = dmsg.data_value;
+  send_unicast((const void*) &dmsg, sizeof(dmsg), (const rimeaddr_t*) &my_status.parent_addr);
+}
 PROCESS_THREAD(data_sender, ev, data)
 {   
   static struct etimer et;
-  static int    timer = 5;
+  static int    timer = DELAY_BETWEEN_DATA;
 
   PROCESS_EXITHANDLER(goto exit);
   PROCESS_BEGIN();
@@ -323,6 +342,7 @@ PROCESS_THREAD(data_sender, ev, data)
     /* If the timer is expired and the mote is connected to the tree, send data */
     if (etimer_expired(&et) && connected_to_tree) {
       send_new_temp_data();
+      send_new_hum_data();
     }
   }
  
