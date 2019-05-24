@@ -19,10 +19,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define PERIOD_DATA_BY_DEFAULT  true
+
 #define TEMP_CHANNEL_NAME       "temp"
 #define MIN_RAND_TEMP           -20
 #define MAX_RAND_TEMP           80
-
 
 /* MT == Message Type */
 #define MT_DISCOVERY            0
@@ -35,6 +36,10 @@ typedef struct {
   uint16_t      parent_rssi;
   int32_t       hops_to_root;
 } Status;
+
+typedef struct {
+  int           temperature;
+} Data_History;
 
 /* Message formats */
 typedef struct {
@@ -54,10 +59,12 @@ typedef struct {
 } Data_Msg;
 
 /* Global variables required */
-static bool     connected_to_tree = false;
-static bool     is_root = false;
-static Status   my_status;
-static uint8_t  no_news_from_parent = 0;
+static bool         connected_to_tree = false;
+static bool         is_root = false;
+static bool         periodic_data = PERIOD_DATA_BY_DEFAULT;
+static uint8_t      no_news_from_parent = 0;
+static Status       my_status;
+static Data_History my_data_history;
 
 static void process_status_msg(const rimeaddr_t *from, Status status, uint16_t rssi);
 static void send_broadcast(const void* msg, int size);
@@ -282,6 +289,11 @@ static void send_new_temp_data(){
   dmsg.mote_addr_from = rimeaddr_node_addr;
   dmsg.data_value = get_rand_temp();
 
+  if (!periodic_data && dmsg.data_value == my_data_history.temperature) {
+    return;
+  }
+
+  my_data_history.temperature = dmsg.data_value;
   send_unicast((const void*) &dmsg, sizeof(dmsg), (const rimeaddr_t*) &my_status.parent_addr);
 }
 PROCESS_THREAD(data_sender, ev, data)
@@ -291,17 +303,27 @@ PROCESS_THREAD(data_sender, ev, data)
 
   PROCESS_EXITHANDLER(goto exit);
   PROCESS_BEGIN();
-
+  SENSORS_ACTIVATE(button_sensor);
   random_init(rimeaddr_node_addr.u8[0] + rimeaddr_node_addr.u8[1]);
 
   while(1) {
     etimer_set(&et, CLOCK_SECOND * timer + random_rand() % (CLOCK_SECOND * timer));
-    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
+    PROCESS_WAIT_EVENT();
 
-    if (!connected_to_tree) continue;   // skip the loop, wait for tree connection
-    else if (is_root) goto exit;        // the root doesn't create any data (TODO: really ?)
+    if (is_root) goto exit; // the root doesn't create any data (TODO: really ?)
 
-    send_new_temp_data();
+    /* If the button has been pressed, change the data sending mode */
+    if(ev == sensors_event) {
+      if(data == &button_sensor) {
+        periodic_data = !periodic_data;
+        printf("Data sending mode changed : %s\n", periodic_data ? "periodically" : "only on change");
+      }
+    }
+
+    /* If the timer is expired and the mote is connected to the tree, send data */
+    if (etimer_expired(&et) && connected_to_tree) {
+      send_new_temp_data();
+    }
   }
  
   exit: ;
