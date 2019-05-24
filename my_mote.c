@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 #include "dev/button-sensor.h"
+#include "dev/serial-line.h"
 
 #include "dev/leds.h"
 
@@ -174,7 +175,8 @@ static struct unicast_conn uc;
 
 PROCESS(manage_motes_network, "Manage the motes network");
 PROCESS(data_sender, "Send data");
-AUTOSTART_PROCESSES(&manage_motes_network, &data_sender);
+PROCESS(test_serial, "Serial line test process");
+AUTOSTART_PROCESSES(&manage_motes_network, &data_sender, &test_serial);
 
 /*---------------------------------------------------------------------------*/
 static void
@@ -347,4 +349,18 @@ PROCESS_THREAD(data_sender, ev, data)
  
   exit: ;
     PROCESS_END();
+}
+PROCESS_THREAD(test_serial, ev, data)
+{
+  if (!is_the_root()) return 0;
+
+  PROCESS_BEGIN();
+
+  for(;;) {
+    PROCESS_YIELD();
+    if(ev == serial_line_event_message) {
+      printf("received line: %s\n", (char *)data);
+    }
+  }
+  PROCESS_END();
 }
