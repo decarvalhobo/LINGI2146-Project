@@ -1,24 +1,12 @@
-#include "contiki.h"
 #include "net/rime.h"
 #include "random.h"
-
-#include <stdlib.h>
-#include <stdio.h>
-
 #include "dev/button-sensor.h"
 #include "dev/serial-line.h"
-
-#include "dev/leds.h"
-
 #include <stdio.h>
-
-#define MAX_RETRANSMISSIONS 4
-#define NUM_HISTORY_ENTRIES 4
+#include <string.h>
+#include <stdbool.h>
 
 /*---------------------------------------------------------------------------*/
-#include <string.h> // for strncpy
-#include <stdbool.h>
-#include <stdint.h>
 
 #define DELAY_BETWEEN_DATA      5
 #define PERIOD_DATA_BY_DEFAULT  true
@@ -29,6 +17,7 @@
 
 #define HUM_CHANNEL_NAME       "hum"
 
+/*---------------------------------------------------------------------------*/
 /* MT == Message Type */
 #define MT_DISCOVERY            0
 #define MT_STATUS               1
