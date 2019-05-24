@@ -64,7 +64,6 @@ typedef struct {
 
 /* Global variables required */
 static bool         connected_to_tree = false;
-static bool         is_root = false;
 static bool         periodic_data = PERIOD_DATA_BY_DEFAULT;
 static uint8_t      no_news_from_parent = 0;
 static Status       my_status;
@@ -79,6 +78,9 @@ static void store_status(const rimeaddr_t *from, uint32_t hops, uint16_t rssi, b
 static void parent_disconnection();
 static void print_data_msg(Data_Msg* msg);
 
+static bool is_the_root() {
+  return rimeaddr_node_addr.u8[0] == 1 && rimeaddr_node_addr.u8[1] == 0;
+}
 static void print_data_msg(Data_Msg* msg)
 {
   /* FORMAT : ;<mote_addr>;<channel name>;<data value> */
@@ -147,7 +149,7 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
     case MT_DATA: ;
       Data_Msg* data_msg = (Data_Msg *) packetbuf_dataptr(); 
       printf("Message received from %u.%u : Data !\n", from->u8[0], from->u8[1]);
-      if (is_root) {
+      if (is_the_root()) {
 	    print_data_msg((Data_Msg*) data_msg);
       } else if (connected_to_tree) {
         send_unicast((const void*) data_msg, sizeof(*data_msg), 
@@ -234,10 +236,7 @@ PROCESS_THREAD(manage_motes_network, ev, data)
 
   reset_status();
 
-  /* By default, node 1.0 is the root */
-  is_root = rimeaddr_node_addr.u8[0] == 1 && rimeaddr_node_addr.u8[1] == 0;
-
-  if (is_root) {
+  if (is_the_root()) {
     my_status.hops_to_root = 0;
     connected_to_tree = true;
   } 
@@ -256,7 +255,7 @@ PROCESS_THREAD(manage_motes_network, ev, data)
       continue;
     } 
     
-    if (!is_root) {
+    if (!is_the_root()) {
       if (no_news_from_parent > 2) {
         parent_disconnection();
         continue;
@@ -319,6 +318,8 @@ PROCESS_THREAD(data_sender, ev, data)
 {   
   static struct etimer et;
   static int    timer = DELAY_BETWEEN_DATA;
+  
+  if (is_the_root()) return 0; // the root doesn't create any data (TODO: really ?)
 
   PROCESS_EXITHANDLER(goto exit);
   PROCESS_BEGIN();
@@ -328,8 +329,6 @@ PROCESS_THREAD(data_sender, ev, data)
   while(1) {
     etimer_set(&et, CLOCK_SECOND * timer + random_rand() % (CLOCK_SECOND * timer));
     PROCESS_WAIT_EVENT();
-
-    if (is_root) goto exit; // the root doesn't create any data (TODO: really ?)
 
     /* If the button has been pressed, change the data sending mode */
     if(ev == sensors_event) {
