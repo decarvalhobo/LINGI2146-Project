@@ -70,8 +70,8 @@ static void print_data_msg(Data_Msg* msg);
 
 static void print_data_msg(Data_Msg* msg)
 {
-  /* FORMAT : <mote_addr>;<channel name>;<data value> */
-  printf("%u:%u;%s;%d\n",
+  /* FORMAT : ;<mote_addr>;<channel name>;<data value> */
+  printf(";%u:%u;%s;%d\n",
           msg->mote_addr_from.u8[0], 
           msg->mote_addr_from.u8[1], 
           msg->channel_name, 
@@ -112,8 +112,8 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
   uint8_t* message_type = (uint8_t *) packetbuf_dataptr();
   switch(*message_type) {
     case MT_DISCOVERY:
-      //printf("Message received from %u.%u : ask for discovery !\n",
-       //       from->u8[0], from->u8[1]);
+      printf("Message received from %u.%u : ask for discovery !\n",
+              from->u8[0], from->u8[1]);
       if (connected_to_tree) {
         Status_Msg msg = {MT_STATUS, my_status};
         send_unicast((const void*) &msg, sizeof(msg), from);
@@ -124,18 +124,18 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
       break;
     case MT_STATUS: ;
       Status_Msg* status_msg = (Status_Msg *) packetbuf_dataptr(); 
-      //printf("Message received from %u.%u : status !\n", from->u8[0], from->u8[1]);
+      printf("Message received from %u.%u : status !\n", from->u8[0], from->u8[1]);
       process_status_msg(from, status_msg->status, packetbuf_attr(PACKETBUF_ATTR_RSSI));
       break;
     case MT_DISCONNECTION: 
-      //printf("Message received from %u.%u : Disconnection !\n", from->u8[0], from->u8[1]);
+      printf("Message received from %u.%u : Disconnection !\n", from->u8[0], from->u8[1]);
       if (connected_to_tree && rimeaddr_cmp((const rimeaddr_t *) &my_status.parent_addr, from)) {
         parent_disconnection();
       }
       break;
     case MT_DATA: ;
       Data_Msg* data_msg = (Data_Msg *) packetbuf_dataptr(); 
-      //printf("Message received from %u.%u : Data !\n", from->u8[0], from->u8[1]);
+      printf("Message received from %u.%u : Data !\n", from->u8[0], from->u8[1]);
       if (is_root) {
 	    print_data_msg((Data_Msg*) data_msg);
       } else if (connected_to_tree) {
@@ -174,12 +174,12 @@ static struct broadcast_conn broadcast;
 
 /*---------------------------------------------------------------------------*/
 static void send_broadcast(const void* msg, int size){
-  //printf("Send broadcast message\n");
+  printf("Send broadcast message\n");
   packetbuf_copyfrom(msg, size);
   broadcast_send(&broadcast);
 }
 static void send_unicast(const void* msg, int size, const rimeaddr_t* to){
-  //printf("Send unicast message to %u.%u\n", to->u8[0], to->u8[1]);//
+  printf("Send unicast message to %u.%u\n", to->u8[0], to->u8[1]);//
   packetbuf_copyfrom(msg, size);
   unicast_send(&uc, to);
 }
@@ -205,7 +205,7 @@ static void store_status(const rimeaddr_t *from, uint32_t hops, uint16_t rssi, b
 static void parent_disconnection() {
   reset_status();
   Basic_Msg msg = {MT_DISCONNECTION};
-  //printf("/!\\ /!\\ Parent lost.\n");
+  printf("/!\\ /!\\ Parent lost.\n");
   send_broadcast((const void *) &msg, sizeof(msg));
 }
 PROCESS_THREAD(manage_motes_network, ev, data)
@@ -256,8 +256,8 @@ PROCESS_THREAD(manage_motes_network, ev, data)
       no_news_from_parent++;
     }
 	
-    //printf("### Connected to tree, parent : %u.%u ###\n",
-     //     my_status.parent_addr.u8[0], my_status.parent_addr.u8[1]);
+    printf("### Connected to tree, parent : %u.%u ###\n",
+          my_status.parent_addr.u8[0], my_status.parent_addr.u8[1]);
     broadcast_status();
 
   }
