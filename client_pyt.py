@@ -44,11 +44,11 @@ class SubClnr(Thread):
 					if (len(topic_set[topic])==0 and topic not in notified): # no subscriber and not yet notified to the root
 						send_stop(client_socket,topic)
 						notified.add(topic)
-						print (" STOP "+topic)
+						print (" Cleaner stopped the topic :  "+topic)
 					if (len(topic_set[topic])>0 and topic in notified): # has subscriber and still in the notified list
 						send_restart(client_socket,topic)
 						notified.remove(topic)
-						print (" RESTART "+topic)
+						print (" Cleaner restarted the topic :  "+topic)
 				if (self.first == 1):
 					time.sleep(10)
 					self.first=0
@@ -76,22 +76,23 @@ class SubscriptionOpti(Thread):
 		if (nxtIsTopic):
 			nxtIsTopic = False
 			topic = tabline[1].split('\t')[1]
-			if (topic not in topic_set):
-				print ("Tried to subscribe to unknown topic: "+topic)
+			if (topic not in topic_set):	# if we don't know the topic
+				print ("Tried to subscribe to unknown topic : "+topic)
 				continue
 			else:
-				if (len(topic_set[topic])==0): 
-					send_restart(client_socket,topic)
-					if (topic in notified):
+				if (len(topic_set[topic])==0): # if this topic was advertised but no one was sub
+					send_restart(client_socket,topic) # restart the advertisement for this topic
+					if (topic in notified):			
 						notified.remove(topic)
-					print ("Unmuted " + topic)
+					print ("SubscriptionOpti restarted the topic : " + topic)	
 				if (idSub not in topic_set[topic]):				
 					topic_set[topic].append(idSub)
+
 		# check for subscription and get the id  
 		if (tabline[1]=="Received" and tabline[2]=="SUBSCRIBE"):
 			nxtIsTopic = True
-			#print tabline
 			idSub = tabline[4].split('-')[0]
+
 		# check if disconnection to withdraw id from subscriber set
 		if (tabline[1]=="Socket" and tabline[2]=="error"):
 			idSub = tabline[5].split('-')[0]
@@ -100,7 +101,7 @@ class SubscriptionOpti(Thread):
 				if (len(topic_set[top])==0 and top not in notified): 
 					notified.add(topic)		# case this topic has no sub and is not notified,
 					send_stop(client_socket,top)	# notify the root of it	
-					print "Muted " + top
+					print ("SubscriptionOpti stopped the topic :  " + top)
 		if (line == '' and self.pr.poll() != None):
 		    break
 
@@ -124,14 +125,11 @@ def main(client_socket):
 					topic = topic_value[2]
 					if (topic not in topic_set):
 						topic_set[topic]=[]
-					#print "Set of topics "
-					#print topic_set
 					myCmd = 'mosquitto_pub -h ' + BROKER_ADDR + ' -t ' + topic_value[2] + ' -p '+ BROKER_PORT+' -m ' + topic_value[3] 
 					# execute the command that publishes the data received to the specified topic
 					# the mosquitto clients must be installed : apt-get install mosquitto-clients 
 					os.system(myCmd)
-					print "Message sent from "+topic_value[1]+ " for topic : "+ topic_value[2] + ' with value: ' + topic_value[3]
-
+					print ("Message sent from "+topic_value[1]+ " for topic : "+ topic_value[2] + ' with value: ' + topic_value[3])
 				topic_value = []
 			tmp=""
 			message=""
