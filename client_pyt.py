@@ -99,7 +99,7 @@ class SubscriptionOpti(Thread):
 				if (idSub in topic_set[top]): topic_set[top].remove(idSub) # remove idSub from the publisher list for topic top
 				if (len(topic_set[top])==0 and top not in notified): 
 					notified.add(topic)		# case this topic has no sub and is not notified,
-					send_stop(client_socket,topic)	# notify the root of it	
+					send_stop(client_socket,top)	# notify the root of it	
 					print "Muted " + top
 		if (line == '' and self.pr.poll() != None):
 		    break
