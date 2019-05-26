@@ -60,10 +60,10 @@ typedef struct {
 } Broker_Status_Msg;
 
 typedef struct {
-    uint8_t     type;
-    char*       channel_name;
-    rimeaddr_t  mote_addr_from;
-    int         data_value;
+  uint8_t       type;
+  char*         channel_name;
+  rimeaddr_t    mote_addr_from;
+  int           data_value;
 } Data_Msg;
 
 /* Global variables required */
@@ -197,8 +197,8 @@ static struct unicast_conn uc;
 
 PROCESS(manage_motes_network, "Manage the motes network");
 PROCESS(data_sender, "Send data");
-PROCESS(test_serial, "Serial line test process");
-AUTOSTART_PROCESSES(&manage_motes_network, &data_sender, &test_serial);
+PROCESS(socket_listener, "Listen socket");
+AUTOSTART_PROCESSES(&manage_motes_network, &data_sender, &socket_listener);
 
 /*---------------------------------------------------------------------------*/
 static void
@@ -375,7 +375,7 @@ PROCESS_THREAD(data_sender, ev, data)
   exit: ;
     PROCESS_END();
 }
-PROCESS_THREAD(test_serial, ev, data)
+PROCESS_THREAD(socket_listener, ev, data)
 {
   if (!is_the_root()) return 0;
 
