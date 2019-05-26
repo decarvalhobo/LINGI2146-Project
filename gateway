@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import subprocess
-from threading import Thread, RLock
+from threading import Thread
 import socket, time
 import os
 
