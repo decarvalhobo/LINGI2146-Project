@@ -8,7 +8,7 @@ import os
 COOJA_ADDR = 'localhost'
 COOJA_PORT = 60001
 BROKER_ADDR = 'localhost'
-BROKER_PORT = "1885"
+BROKER_PORT = "1888"
 RCV_WDWS = 1024
 
 # Global variables
