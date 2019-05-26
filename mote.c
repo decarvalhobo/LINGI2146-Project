@@ -60,10 +60,10 @@ typedef struct {
 } Broker_Status_Msg;
 
 typedef struct {
-    uint8_t     type;
-    char*       channel_name;
-    rimeaddr_t  mote_addr_from;
-    int         data_value;
+  uint8_t       type;
+  char*         channel_name;
+  rimeaddr_t    mote_addr_from;
+  int           data_value;
 } Data_Msg;
 
 /* Global variables required */
@@ -84,19 +84,27 @@ static void parent_disconnection();
 static void print_data_msg(Data_Msg* msg);
 
 static bool is_the_root() {
+  /* By default, the root is the mote 1.0 */
   return rimeaddr_node_addr.u8[0] == 1 && rimeaddr_node_addr.u8[1] == 0;
 }
-static void print_data_msg(Data_Msg* msg)
+static void print_data_msg_not_ptr(Data_Msg msg)
 {
-  /* FORMAT : ;<mote_addr>;<channel name>;<data value> */
+  /*  Use to 'send' data to the gateway
+      FORMAT : ;<mote_addr>;<channel name>;<data value> */
   printf(";%u:%u;%s;%d\n",
-          msg->mote_addr_from.u8[0], 
-          msg->mote_addr_from.u8[1], 
-          msg->channel_name, 
-          msg->data_value);
+          msg.mote_addr_from.u8[0], 
+          msg.mote_addr_from.u8[1], 
+          msg.channel_name, 
+          msg.data_value);
 }
+static void print_data_msg(Data_Msg* msg) {
+  print_data_msg_not_ptr(*msg);
+}
+
+/* This function processes a mote status message */
 static void process_status_msg(const rimeaddr_t *from, Mote_Status sender_status, uint16_t rssi) {
-  bool is_new_parent = true;
+  bool is_new_parent = true; // By default, the sender is a new parent, we will 
+                             // check more details further
 
   if (rimeaddr_cmp((const rimeaddr_t*) &rimeaddr_node_addr, 
         (const rimeaddr_t*) &sender_status.parent_addr)) {
@@ -126,6 +134,8 @@ static void process_status_msg(const rimeaddr_t *from, Mote_Status sender_status
   }
 }
 
+/* !! This function is the place through which all received messages pass and are 
+    redirected if necessary !! */
 static void process_message(const rimeaddr_t *from, bool is_unicast) {
   uint8_t* message_type = (uint8_t *) packetbuf_dataptr();
   switch(*message_type) {
@@ -136,6 +146,7 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
         Mote_Status_Msg msg = {MT_STATUS, my_status};
         send_unicast((const void*) &msg, sizeof(msg), from);
       } else if (!connected_to_tree && is_unicast) {
+        /* If it's a unicast message, it means it comes from a children */
         Basic_Msg msg = {MT_DISCONNECTION};
         send_unicast((const void*) &msg, sizeof(msg), from);
       }
@@ -143,7 +154,9 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
     case MT_STATUS: ;
       Mote_Status_Msg* status_msg = (Mote_Status_Msg *) packetbuf_dataptr(); 
       printf("Message received from %u.%u : status !\n", from->u8[0], from->u8[1]);
+      /* We always check if the broker status of the mote is up to date : */
       if (status_msg->status.broker_version > broker_status.version) {
+        /* If not, we ask for details to the status message sender */
         Basic_Msg bmsg = {MT_NEED_BROKER_STATUS};  
         send_unicast((const void*) &bmsg, sizeof(bmsg), from);
       }
@@ -152,6 +165,7 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
     case MT_DISCONNECTION: 
       printf("Message received from %u.%u : Disconnection !\n", from->u8[0], from->u8[1]);
       if (connected_to_tree && rimeaddr_cmp((const rimeaddr_t *) &my_status.parent_addr, from)) {
+        /* If my parent is now disconnected from the tree, the mote is disconnected too */
         parent_disconnection();
       }
       break;
@@ -159,8 +173,17 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
       Data_Msg* data_msg = (Data_Msg *) packetbuf_dataptr(); 
       printf("Message received from %u.%u : Data !\n", from->u8[0], from->u8[1]);
       if (is_the_root()) {
+        /* If the root receives some data not required by the broker, the mote does not transfer
+            it to the gateway. It can happen if the sender mote wasn't informed yet about the
+            last broker status version. The root is the only one able to discard the data messages
+            because it always has the last broker status version. */
+        if ((strcmp(data_msg->channel_name, TEMP_CHANNEL_NAME) == 0 && !broker_status.temp_required)
+          || (strcmp(data_msg->channel_name, HUM_CHANNEL_NAME) == 0 && !broker_status.hum_required) ) {
+          return;
+        }
 	    print_data_msg((Data_Msg*) data_msg);
       } else if (connected_to_tree) {
+        /* Transfer the data to the mote's parent */
         send_unicast((const void*) data_msg, sizeof(*data_msg), 
                      (const rimeaddr_t*) &my_status.parent_addr);
       }
@@ -168,6 +191,7 @@ static void process_message(const rimeaddr_t *from, bool is_unicast) {
     case MT_BROKER_STATUS: ;
       Broker_Status_Msg* br_status_msg = (Broker_Status_Msg *) packetbuf_dataptr(); 
       printf("Message received from %u.%u : Broker status !\n", from->u8[0], from->u8[1]);
+      /* If it is a new broker status version, update and broadcast it */
       if (br_status_msg->br_status.version > broker_status.version) {
         broker_status = br_status_msg->br_status;
         my_status.broker_version = broker_status.version;
@@ -197,8 +221,8 @@ static struct unicast_conn uc;
 
 PROCESS(manage_motes_network, "Manage the motes network");
 PROCESS(data_sender, "Send data");
-PROCESS(test_serial, "Serial line test process");
-AUTOSTART_PROCESSES(&manage_motes_network, &data_sender, &test_serial);
+PROCESS(socket_listener, "Listen socket");
+AUTOSTART_PROCESSES(&manage_motes_network, &data_sender, &socket_listener);
 
 /*---------------------------------------------------------------------------*/
 static void
@@ -240,14 +264,19 @@ static void store_status(const rimeaddr_t *from, uint32_t hops, uint16_t rssi, b
   my_status.parent_rssi = rssi;
   connected_to_tree = true;
   no_news_from_parent = 0;
+  /* If this is not a parent status update but a new parent,
+      we inform the others (because it's not urgent, the network process
+      will send a status message soon...) : */
   if (broadcast) broadcast_status();
 }
 static void parent_disconnection() {
   reset_status();
   Basic_Msg msg = {MT_DISCONNECTION};
   printf("/!\\ /!\\ Parent lost.\n");
+  /* The mote propagates disconnection information as quickly as possible */
   send_broadcast((const void *) &msg, sizeof(msg));
 }
+/*---------------------------------------------------------------------------*/
 PROCESS_THREAD(manage_motes_network, ev, data)
 {
   static struct etimer et;
@@ -269,8 +298,9 @@ PROCESS_THREAD(manage_motes_network, ev, data)
   } 
 
   while(1) {
-
+    /* If not connected, quickly broadcast a message to find a parent */
     if (!connected_to_tree) timer = 1;
+    /* Else, wait for more time and broadcast the current status */
     else                    timer = 4;
     
     etimer_set(&et, CLOCK_SECOND * timer + random_rand() % (CLOCK_SECOND * timer));
@@ -283,10 +313,15 @@ PROCESS_THREAD(manage_motes_network, ev, data)
     } 
     
     if (!is_the_root()) {
+      /* The mote checks if it has some news from its parent 
+          Remind : each time a mote receives a status message from
+          its parent, it resets the variable no_news_from_parent
+          at zero. */
       if (no_news_from_parent > 2) {
         parent_disconnection();
         continue;
       } else if (no_news_from_parent > 1) {
+        /* It asks its parent for some news */
         Basic_Msg msg = {MT_DISCOVERY};
         send_unicast((const void*) &msg, sizeof(msg), (const rimeaddr_t*) &my_status.parent_addr);
       }
@@ -318,13 +353,21 @@ static void send_new_temp_data(){
   dmsg.channel_name = TEMP_CHANNEL_NAME;
   dmsg.mote_addr_from = rimeaddr_node_addr;
   dmsg.data_value = get_rand(MIN_RAND_TEMP, MAX_RAND_TEMP);
-
+  
+  /* If this is the "send only on data change" mode and the data hasn't
+      change, send nothing */
   if (!periodic_data && dmsg.data_value == my_data_history.temperature) {
     return;
   }
-
+  
+  /* Store and send the new data */
   my_data_history.temperature = dmsg.data_value;
-  send_unicast((const void*) &dmsg, sizeof(dmsg), (const rimeaddr_t*) &my_status.parent_addr);
+
+  /* If the mote is the root, directly send it to the gateway */
+  if (is_the_root()) print_data_msg_not_ptr(dmsg);
+  /* Else, send it to the mote's parent */
+  else send_unicast((const void*) &dmsg, sizeof(dmsg), 
+        (const rimeaddr_t*) &my_status.parent_addr);
 }
 static void send_new_hum_data(){
   Data_Msg dmsg;
@@ -334,23 +377,30 @@ static void send_new_hum_data(){
   dmsg.mote_addr_from = rimeaddr_node_addr;
   dmsg.data_value = get_rand(0, 100);
 
+  /* If this is the "send only on data change" mode and the data hasn't
+      change, send nothing */
   if (!periodic_data && dmsg.data_value == my_data_history.humidity) {
     return;
   }
 
+  /* Store and send the new data */
   my_data_history.humidity = dmsg.data_value;
-  send_unicast((const void*) &dmsg, sizeof(dmsg), (const rimeaddr_t*) &my_status.parent_addr);
+
+  /* If the mote is the root, directly send it to the gateway */
+  if (is_the_root()) print_data_msg_not_ptr(dmsg);
+  /* Else, send it to the mote's parent */
+  else send_unicast((const void*) &dmsg, sizeof(dmsg), 
+        (const rimeaddr_t*) &my_status.parent_addr);
 }
 PROCESS_THREAD(data_sender, ev, data)
 {   
   static struct etimer et;
   static int    timer = DELAY_BETWEEN_DATA;
   
-  if (is_the_root()) return 0; // the root doesn't create any data (TODO: really ?)
-
   PROCESS_EXITHANDLER(goto exit);
   PROCESS_BEGIN();
   SENSORS_ACTIVATE(button_sensor);
+  /* Use mote's address as random seed :*/
   random_init(rimeaddr_node_addr.u8[0] + rimeaddr_node_addr.u8[1]);
 
   while(1) {
@@ -375,8 +425,9 @@ PROCESS_THREAD(data_sender, ev, data)
   exit: ;
     PROCESS_END();
 }
-PROCESS_THREAD(test_serial, ev, data)
+PROCESS_THREAD(socket_listener, ev, data)
 {
+  /* The root is the only one concerned by this process */
   if (!is_the_root()) return 0;
 
   PROCESS_BEGIN();
@@ -387,9 +438,11 @@ PROCESS_THREAD(test_serial, ev, data)
       char *str = (char*) data;
       char *value, *subject;
 
+      /* Split the message received : */
       value = strtok (str,":");
       subject = strtok (NULL, ":");
 
+      /* Update the broker status */
       if (strcmp(subject, TEMP_CHANNEL_NAME) == 0) {
         broker_status.temp_required = strcmp(value, "1") == 0;
       } else if (strcmp(subject, HUM_CHANNEL_NAME) == 0) {
@@ -397,6 +450,7 @@ PROCESS_THREAD(test_serial, ev, data)
       }
       broker_status.version++;
 
+      /* Send the new broker status */
       Broker_Status_Msg br_status_msg = {MT_BROKER_STATUS, broker_status};
       send_broadcast((const void*) &br_status_msg, sizeof(br_status_msg));
     }
