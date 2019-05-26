@@ -9,4 +9,4 @@ This project simulates an IoT network using Rime where the sensor data is publis
 - Start the serial socket server :
   - Right-click on the root mote (with address 1.0 by default)
   - Click "Mote tools for Z1 1" > "Serial Socket (SERVER)..."
-- Run the python script `./client`
+- Run the python script `./client` (this is the gateway)
